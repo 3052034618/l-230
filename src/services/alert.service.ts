@@ -16,6 +16,11 @@ export async function handleAlert(id: string, handler: string) {
   return data;
 }
 
+export async function startProcessAlert(id: string, handler: string) {
+  const { data } = await api.post<Alert>(`/alerts/${id}/start-process`, { handler });
+  return data;
+}
+
 export async function approveAlert(
   id: string,
   params: { stepId: string; status: 'approved' | 'rejected'; comment?: string; approver: string }

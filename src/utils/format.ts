@@ -1,5 +1,14 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import type { AlertTimelineEventType } from '@/types';
+import {
+  AlertTriangle,
+  TrendingUp,
+  RefreshCw,
+  CheckCircle,
+  XCircle,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -89,4 +98,26 @@ export function generateRandomId(): string {
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+export function getAlertTimelineIcon(type: AlertTimelineEventType): LucideIcon {
+  const icons: Record<AlertTimelineEventType, LucideIcon> = {
+    created: AlertTriangle,
+    escalated: TrendingUp,
+    status_changed: RefreshCw,
+    approval: CheckCircle,
+    closed: XCircle,
+  };
+  return icons[type];
+}
+
+export function getAlertTimelineColor(type: AlertTimelineEventType): string {
+  const colors: Record<AlertTimelineEventType, string> = {
+    created: 'text-amber-400 bg-amber-500/20 border-amber-500/30',
+    escalated: 'text-red-400 bg-red-500/20 border-red-500/30',
+    status_changed: 'text-brand-400 bg-brand-500/20 border-brand-500/30',
+    approval: 'text-emerald-400 bg-emerald-500/20 border-emerald-500/30',
+    closed: 'text-slate-400 bg-slate-500/20 border-slate-500/30',
+  };
+  return colors[type];
 }

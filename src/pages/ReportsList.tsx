@@ -4,6 +4,7 @@ import type { OperationReport } from '@/types';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
+import { useAuthStore } from '@/store/useAuthStore';
 import {
   FileText,
   TrendingUp,
@@ -12,7 +13,6 @@ import {
   Activity,
   AlertTriangle,
   Clock,
-  Download,
   ChevronRight,
   Calendar,
   Loader2,
@@ -21,6 +21,7 @@ import { cn, formatDate, formatNumber, formatPercent } from '@/utils/format';
 import { Link } from 'react-router-dom';
 
 export default function ReportsList() {
+  const { user } = useAuthStore();
   const [reports, setReports] = useState<OperationReport[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -28,12 +29,16 @@ export default function ReportsList() {
     let mounted = true;
     setLoading(true);
     getReports()
-      .then((res) => mounted && setReports(res))
+      .then((res) => {
+        if (mounted) {
+          setReports(res);
+        }
+      })
       .finally(() => mounted && setLoading(false));
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [user]);
 
   if (loading) {
     return (
@@ -47,7 +52,9 @@ export default function ReportsList() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold text-white">运营健康诊断报告</h1>
+          <h1 className="font-display text-2xl font-bold text-white">
+            {user?.level === 'national' ? '全国' : user?.province || user?.city || user?.region || ''}运营健康诊断报告
+          </h1>
           <p className="mt-1 text-sm text-slate-400">每周自动生成的管廊运营健康分析报告</p>
         </div>
         <div className="flex items-center gap-2">
@@ -59,7 +66,7 @@ export default function ReportsList() {
 
       {reports.length > 0 && (
         <Card
-          title={`最新报告 · ${reports[0].year}年第${reports[0].weekNumber}周`}
+          title={`${reports[0].region}运营健康诊断报告 · ${reports[0].year}年第${reports[0].weekNumber}周`}
           subtitle={`${formatDate(reports[0].startDate)} - ${formatDate(reports[0].endDate)}`}
           glow="cyan"
           rightElement={
@@ -168,7 +175,10 @@ export default function ReportsList() {
               </div>
               <div className="mt-3">
                 <div className="font-medium text-white group-hover:text-brand-300">
-                  第{report.weekNumber}周运营健康报告
+                  {report.region}运营健康诊断报告
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  第{report.weekNumber}周
                 </div>
                 <div className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-500">
                   <Calendar size={11} />

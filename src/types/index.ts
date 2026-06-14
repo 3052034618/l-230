@@ -41,6 +41,17 @@ export interface Device {
 export type AlertLevel = 1 | 2;
 export type AlertType = 'gas_exceed' | 'device_low_availability' | 'other';
 export type AlertStatus = 'pending' | 'processing' | 'approved' | 'rejected' | 'closed' | 'escalated';
+export type AlertTimelineEventType = 'created' | 'escalated' | 'status_changed' | 'approval' | 'closed';
+
+export interface AlertTimelineEvent {
+  id: string;
+  type: AlertTimelineEventType;
+  timestamp: string;
+  operator: string;
+  description: string;
+  result?: string;
+  stepLevel?: number;
+}
 
 export interface Alert {
   id: string;
@@ -59,6 +70,7 @@ export interface Alert {
   deadline: string;
   approvalFlow?: ApprovalStep[];
   handler?: string;
+  timeline: AlertTimelineEvent[];
 }
 
 export type ApprovalRole = 'duty_officer' | 'regional_manager' | 'hq_director';
@@ -159,6 +171,7 @@ export interface OperationReport {
   id: string;
   weekNumber: number;
   year: number;
+  region: string;
   startDate: string;
   endDate: string;
   generatedAt: string;

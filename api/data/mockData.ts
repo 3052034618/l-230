@@ -3,6 +3,7 @@ import type {
   SensorData,
   Device,
   Alert,
+  AlertTimelineEvent,
   MaintenanceEvent,
   InspectionPlan,
   RiskPrediction,
@@ -40,6 +41,29 @@ function minutesAgo(n: number): Date {
 
 function generateId(): string {
   return `id-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function getProvinceCode(province: string): string {
+  const codeMap: Record<string, string> = {
+    '北京': 'bj',
+    '上海': 'sh',
+    '广东': 'gd',
+    '江苏': 'js',
+    '浙江': 'zj',
+    '四川': 'sc',
+    '湖北': 'hb',
+    '山东': 'sd',
+    '陕西': 'sx',
+  };
+  return codeMap[province] || province.slice(0, 2).toLowerCase();
+}
+
+function getUserRegionCode(user: User | undefined | null): string {
+  if (!user) return 'national';
+  if (user.level === 'national') return 'national';
+  if (user.level === 'provincial' && user.province) return getProvinceCode(user.province);
+  if (user.level === 'municipal' && user.city) return getProvinceCode(user.province || '');
+  return 'national';
 }
 
 export const MOCK_USERS: User[] = [
@@ -211,6 +235,51 @@ function createApprovalFlow(): ApprovalStep[] {
   ];
 }
 
+function createTimelineEvent(
+  type: AlertTimelineEvent['type'],
+  timestamp: string,
+  operator: string,
+  description: string,
+  result?: string,
+  stepLevel?: number
+): AlertTimelineEvent {
+  return {
+    id: `tl-${generateId()}`,
+    type,
+    timestamp,
+    operator,
+    description,
+    result,
+    stepLevel,
+  };
+}
+
+export function addTimelineEvent(
+  alertId: string,
+  type: AlertTimelineEvent['type'],
+  operator: string,
+  description: string,
+  result?: string,
+  stepLevel?: number
+): Alert | undefined {
+  const alert = MOCK_ALERTS.find((a) => a.id === alertId);
+  if (!alert) return undefined;
+
+  const event = createTimelineEvent(
+    type,
+    formatDate(new Date()),
+    operator,
+    description,
+    result,
+    stepLevel
+  );
+
+  alert.timeline.push(event);
+  alert.timeline.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  return alert;
+}
+
 function createAlertFromCorridor(
   corridor: CorridorSection,
   type: 'gas_exceed' | 'device_low_availability',
@@ -220,6 +289,7 @@ function createAlertFromCorridor(
   const now = new Date();
 
   if (type === 'gas_exceed' && sensorInfo) {
+    const createdAt = formatDate(minutesAgo(sensorInfo.durationMinutes));
     return {
       id,
       corridorId: corridor.id,
@@ -233,11 +303,20 @@ function createAlertFromCorridor(
       actualValue: sensorInfo.actualValue,
       durationMinutes: sensorInfo.durationMinutes,
       status: 'pending',
-      createdAt: formatDate(minutesAgo(sensorInfo.durationMinutes)),
+      createdAt,
       deadline: formatDate(new Date(now.getTime() + 2 * 3600 * 1000)),
+      timeline: [
+        createTimelineEvent(
+          'created',
+          createdAt,
+          '系统',
+          `${sensorInfo.sensorType === 'gas_ch4' ? 'CH4' : sensorInfo.sensorType === 'gas_co' ? 'CO' : 'H2S'}浓度${sensorInfo.actualValue}${sensorInfo.sensorType === 'gas_ch4' ? '%LEL' : 'ppm'}，超过阈值${sensorInfo.thresholdValue}${sensorInfo.sensorType === 'gas_ch4' ? '%LEL' : 'ppm'}，持续${sensorInfo.durationMinutes}分钟，自动生成一级预警`
+        ),
+      ],
     };
   }
 
+  const createdAt = formatDate(hoursAgo(1));
   return {
     id,
     corridorId: corridor.id,
@@ -247,8 +326,16 @@ function createAlertFromCorridor(
     title: '设备可用率低于阈值',
     description: `${corridor.name}设备可用率${corridor.deviceAvailability.toFixed(1)}%，已连续低于90%`,
     status: 'pending',
-    createdAt: formatDate(hoursAgo(1)),
+    createdAt,
     deadline: formatDate(new Date(now.getTime() + 2 * 3600 * 1000)),
+    timeline: [
+      createTimelineEvent(
+        'created',
+        createdAt,
+        '系统',
+        `设备可用率${corridor.deviceAvailability.toFixed(1)}%，持续低于阈值90%，自动生成一级预警`
+      ),
+    ],
   };
 }
 
@@ -269,6 +356,14 @@ export let MOCK_ALERTS: Alert[] = [
     createdAt: formatDate(hoursAgo(0.5)),
     deadline: formatDate(new Date(Date.now() + 1.5 * 3600 * 1000)),
     handler: '王志强',
+    timeline: [
+      createTimelineEvent(
+        'created',
+        formatDate(hoursAgo(0.5)),
+        '系统',
+        'CH4浓度28.5%LEL，超过阈值25%LEL，持续8分钟，自动生成一级预警'
+      ),
+    ],
   },
   {
     id: 'a2',
@@ -290,6 +385,43 @@ export let MOCK_ALERTS: Alert[] = [
       { id: 'ap2', level: 2, role: 'regional_manager', approver: '李明华', status: 'approved', comment: '同意启动排风，请总部批示', approvedAt: formatDate(hoursAgo(1)), requiredAction: 'ventilation' },
       { id: 'ap3', level: 3, role: 'hq_director', status: 'pending', requiredAction: 'ventilation' },
     ] as ApprovalStep[],
+    timeline: [
+      createTimelineEvent(
+        'created',
+        formatDate(hoursAgo(3)),
+        '系统',
+        'H2S浓度12ppm，超过阈值10ppm，持续15分钟，自动生成一级预警'
+      ),
+      createTimelineEvent(
+        'escalated',
+        formatDate(hoursAgo(1.5)),
+        '系统',
+        '预警超过2小时未处置，自动升级为二级预警，启动三级审批流程'
+      ),
+      createTimelineEvent(
+        'status_changed',
+        formatDate(hoursAgo(2.5)),
+        '陈晓东',
+        '预警状态从 pending 变更为 processing',
+        '开始处置'
+      ),
+      createTimelineEvent(
+        'approval',
+        formatDate(hoursAgo(2.5)),
+        '陈晓东',
+        '一级审批：已确认现场情况，建议启动紧急排风',
+        'approved',
+        1
+      ),
+      createTimelineEvent(
+        'approval',
+        formatDate(hoursAgo(1)),
+        '李明华',
+        '二级审批：同意启动排风，请总部批示',
+        'approved',
+        2
+      ),
+    ],
   },
   {
     id: 'a3',
@@ -303,6 +435,21 @@ export let MOCK_ALERTS: Alert[] = [
     createdAt: formatDate(hoursAgo(2)),
     deadline: formatDate(new Date(Date.now() + 25 * 60 * 1000)),
     handler: '陈晓东',
+    timeline: [
+      createTimelineEvent(
+        'created',
+        formatDate(hoursAgo(2)),
+        '系统',
+        '设备可用率87.3%，持续低于阈值90%，自动生成一级预警'
+      ),
+      createTimelineEvent(
+        'status_changed',
+        formatDate(hoursAgo(1.5)),
+        '陈晓东',
+        '预警状态从 pending 变更为 processing',
+        '开始处置'
+      ),
+    ],
   },
   {
     id: 'a4',
@@ -320,6 +467,28 @@ export let MOCK_ALERTS: Alert[] = [
     createdAt: formatDate(hoursAgo(5)),
     deadline: formatDate(hoursAgo(3)),
     handler: '王志强',
+    timeline: [
+      createTimelineEvent(
+        'created',
+        formatDate(hoursAgo(5)),
+        '系统',
+        'CO浓度32ppm，超过阈值24ppm，持续3分钟，自动生成一级预警'
+      ),
+      createTimelineEvent(
+        'status_changed',
+        formatDate(hoursAgo(4.5)),
+        '王志强',
+        '预警状态从 pending 变更为 processing',
+        '开始处置'
+      ),
+      createTimelineEvent(
+        'closed',
+        formatDate(hoursAgo(3.5)),
+        '王志强',
+        '现场通风处置后，CO浓度恢复至18ppm，低于警戒值，预警关闭',
+        '已恢复'
+      ),
+    ],
   },
   {
     id: 'a5',
@@ -337,6 +506,20 @@ export let MOCK_ALERTS: Alert[] = [
       { id: 'ap5', level: 2, role: 'regional_manager', status: 'pending' },
       { id: 'ap6', level: 3, role: 'hq_director', status: 'pending' },
     ] as ApprovalStep[],
+    timeline: [
+      createTimelineEvent(
+        'created',
+        formatDate(hoursAgo(8)),
+        '系统',
+        '设备可用率88.2%，持续低于阈值90%，自动生成一级预警'
+      ),
+      createTimelineEvent(
+        'escalated',
+        formatDate(hoursAgo(5)),
+        '系统',
+        '预警超过2小时未处置，自动升级为二级预警，启动三级审批流程'
+      ),
+    ],
   },
 ];
 
@@ -357,6 +540,15 @@ export function updateAlerts(): Alert[] {
           approvalFlow: createApprovalFlow(),
           deadline: formatDate(new Date(now.getTime() + 4 * 3600 * 1000)),
           description: `${alert.description}（已自动升级为二级预警）`,
+          timeline: [
+            ...alert.timeline,
+            createTimelineEvent(
+              'escalated',
+              formatDate(now),
+              '系统',
+              '预警超过2小时未处置，自动升级为二级预警，启动三级审批流程'
+            ),
+          ],
         };
       }
     }
@@ -422,8 +614,12 @@ export let MOCK_INSPECTION_PLANS: InspectionPlan[] = [
 ];
 
 export function addInspectionPlan(plan: Omit<InspectionPlan, 'id' | 'uploadedAt'> & { id?: string; uploadedAt?: string }): InspectionPlan {
+  if (plan.year === undefined || plan.year === null) {
+    throw new Error('年度参数不能为空');
+  }
   const newPlan: InspectionPlan = {
     ...plan,
+    year: plan.year,
     id: plan.id || `ip-${Date.now()}`,
     uploadedAt: plan.uploadedAt || formatDate(new Date()),
   };
@@ -470,45 +666,102 @@ export const MOCK_INSPECTION_ROUTES: InspectionRoute[] = [
   },
 ];
 
-export const MOCK_REPORTS: OperationReport[] = Array.from({ length: 8 }).map((_, i) => {
-  const weekNum = 24 - i;
-  const start = daysAgo((i + 1) * 7);
-  const end = daysAgo(i * 7);
-  return {
-    id: `rep-2026-w${weekNum}`,
+const reportCache = new Map<string, OperationReport>();
+
+export function generateReportForUser(user: User | undefined | null, weekOffset = 0): OperationReport {
+  const regionCode = getUserRegionCode(user);
+  const regionName = user?.level === 'national' ? '全国' : user?.province || user?.city || user?.region || '全国';
+  const year = 2026;
+  const weekNum = 24 - weekOffset;
+  const reportId = `rep-${regionCode}-${year}-w${weekNum}`;
+
+  if (reportCache.has(reportId)) {
+    return reportCache.get(reportId)!;
+  }
+
+  const corridors = filterCorridorsByUser(user, MOCK_CORRIDORS);
+  const alerts = filterAlertsByUser(user, MOCK_ALERTS);
+
+  const start = daysAgo((weekOffset + 1) * 7);
+  const end = daysAgo(weekOffset * 7);
+
+  const avgHealthIndex = corridors.length > 0
+    ? corridors.reduce((s, c) => s + c.healthIndex, 0) / corridors.length
+    : 0;
+  const avgDeviceAvailability = corridors.length > 0
+    ? corridors.reduce((s, c) => s + c.deviceAvailability, 0) / corridors.length
+    : 0;
+
+  const lowHealthCorridors = corridors.filter((c) => c.healthIndex < 85);
+  const highFailureCorridors = corridors.filter((c) => c.failureRate > 3);
+
+  const recommendations: string[] = [];
+  if (lowHealthCorridors.length > 0) {
+    recommendations.push(`建议增加对${lowHealthCorridors[0].name}的巡检频次至每周1次`);
+  }
+  if (highFailureCorridors.length > 0) {
+    recommendations.push(`${highFailureCorridors[0].name}设备故障率偏高，建议安排全面检修`);
+  }
+  if (corridors.some((c) => c.province === '广东')) {
+    recommendations.push('珠三角区域管廊通风设备备件库存需补充');
+  }
+  if (corridors.length > 3) {
+    recommendations.push('优化高风险区域的传感器布点密度');
+  }
+
+  const report: OperationReport = {
+    id: reportId,
     weekNumber: weekNum,
-    year: 2026,
+    year,
+    region: regionName,
     startDate: formatDate(start),
     endDate: formatDate(end),
     generatedAt: formatDate(end),
     summary: {
-      avgHealthIndex: 88 - i * 0.8 + Math.random() * 2,
-      healthIndexYoY: 2.3 - i * 0.1,
-      healthIndexWoW: i === 0 ? 0.5 : i === 1 ? -0.3 : (Math.random() - 0.5) * 1,
-      totalAlerts: Math.floor(15 + Math.random() * 10),
-      avgDeviceAvailability: 96.5 - i * 0.3,
-      maintenanceTimelyRate: 92 - i * 0.5,
+      avgHealthIndex: Number(avgHealthIndex.toFixed(1)),
+      healthIndexYoY: 2.3 - weekOffset * 0.1,
+      healthIndexWoW: weekOffset === 0 ? 0.5 : weekOffset === 1 ? -0.3 : (Math.random() - 0.5) * 1,
+      totalAlerts: Math.max(0, Math.floor(alerts.length * 0.8 + Math.random() * 5)),
+      avgDeviceAvailability: Number(avgDeviceAvailability.toFixed(1)),
+      maintenanceTimelyRate: 92 - weekOffset * 0.5,
     },
     failureDistribution: [
-      { category: '通风设备故障', count: 8, percentage: 32 },
-      { category: '气体传感器异常', count: 6, percentage: 24 },
-      { category: '照明系统故障', count: 5, percentage: 20 },
-      { category: '排水泵故障', count: 3, percentage: 12 },
-      { category: '其他', count: 3, percentage: 12 },
+      { category: '通风设备故障', count: Math.floor(5 + Math.random() * 5), percentage: 32 },
+      { category: '气体传感器异常', count: Math.floor(4 + Math.random() * 4), percentage: 24 },
+      { category: '照明系统故障', count: Math.floor(3 + Math.random() * 3), percentage: 20 },
+      { category: '排水泵故障', count: Math.floor(2 + Math.random() * 2), percentage: 12 },
+      { category: '其他', count: Math.floor(2 + Math.random() * 2), percentage: 12 },
     ],
     trendComparison: Array.from({ length: 6 }).map((_, j) => ({
       week: `W${weekNum - 5 + j}`,
-      healthIndex: 87 + Math.random() * 3,
-      failureRate: 2 + Math.random() * 1,
+      healthIndex: Number((87 + Math.random() * 3).toFixed(1)),
+      failureRate: Number((2 + Math.random() * 1).toFixed(2)),
     })),
-    recommendations: [
-      '建议增加对前海管廊的巡检频次至每周1次',
-      '珠江新城管廊通风设备备件库存需补充',
-      '第三季度安排陆家嘴管廊设备全面检修',
-      '优化高风险区域的传感器布点密度',
-    ].slice(0, Math.floor(Math.random() * 2) + 2),
+    recommendations: recommendations.slice(0, Math.max(2, recommendations.length)),
   };
-});
+
+  reportCache.set(reportId, report);
+  return report;
+}
+
+export function generateAllReportsForUser(user: User | undefined | null): OperationReport[] {
+  const reports: OperationReport[] = [];
+  for (let i = 0; i < 8; i++) {
+    reports.push(generateReportForUser(user, i));
+  }
+  return reports;
+}
+
+export let MOCK_REPORTS: OperationReport[] = generateAllReportsForUser(null);
+
+export function getReports(user?: User | null): OperationReport[] {
+  return generateAllReportsForUser(user);
+}
+
+export function getReportById(id: string, user?: User | null): OperationReport | undefined {
+  const allReports = generateAllReportsForUser(user);
+  return allReports.find((r) => r.id === id);
+}
 
 export function filterCorridorsByUser(user: User | undefined | null, corridors: CorridorSection[]): CorridorSection[] {
   if (!user) return corridors;

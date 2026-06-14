@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { MOCK_ALERTS, updateAlerts, filterAlertsByUser } from '../data/mockData.js';
+import { MOCK_ALERTS, updateAlerts, filterAlertsByUser, addTimelineEvent } from '../data/mockData.js';
 import type { AlertStatus } from '../../src/types';
 
 const router = Router();
@@ -38,6 +38,37 @@ router.post('/:id/handle', (req, res) => {
   }
   alert.status = 'closed';
   alert.handler = req.body.handler || '系统';
+
+  addTimelineEvent(
+    alert.id,
+    'closed',
+    alert.handler,
+    '预警已关闭',
+    req.body.result || '处置完成',
+    undefined
+  );
+
+  res.json(alert);
+});
+
+router.post('/:id/start-process', (req, res) => {
+  const alert = MOCK_ALERTS.find((a) => a.id === req.params.id);
+  if (!alert) {
+    return res.status(404).json({ error: '预警不存在' });
+  }
+  const oldStatus = alert.status;
+  alert.status = 'processing';
+  alert.handler = req.body.handler || '系统';
+
+  addTimelineEvent(
+    alert.id,
+    'status_changed',
+    alert.handler,
+    `预警状态从 ${oldStatus} 变更为 processing`,
+    '开始处置',
+    undefined
+  );
+
   res.json(alert);
 });
 
@@ -55,6 +86,27 @@ router.post('/:id/approve', (req, res) => {
   step.comment = comment;
   step.approver = approver;
   step.approvedAt = new Date().toISOString();
+
+  if (status === 'approved') {
+    addTimelineEvent(
+      alert.id,
+      'approval',
+      approver || '系统',
+      `第${step.level}级审批通过`,
+      comment,
+      step.level
+    );
+  } else if (status === 'rejected') {
+    addTimelineEvent(
+      alert.id,
+      'approval',
+      approver || '系统',
+      `第${step.level}级审批驳回`,
+      comment,
+      step.level
+    );
+  }
+
   const allApproved = alert.approvalFlow.every((s) => s.status === 'approved');
   if (allApproved) {
     alert.status = 'approved';

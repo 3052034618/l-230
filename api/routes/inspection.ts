@@ -55,7 +55,7 @@ router.post('/plans', (req, res) => {
   const { year, uploadedBy, nodes } = req.body;
   const enrichedNodes = enrichNodesWithCorridorId(nodes || []);
   const newPlan = addInspectionPlan({
-    year: year || new Date().getFullYear(),
+    year: year,
     uploadedBy: uploadedBy || '系统',
     status: 'draft',
     nodes: enrichedNodes,
@@ -64,15 +64,14 @@ router.post('/plans', (req, res) => {
 });
 
 router.post('/plans/upload', (req, res) => {
-  const newPlan = {
-    id: 'ip-' + Date.now(),
-    year: 2026,
-    uploadedAt: new Date().toISOString(),
-    uploadedBy: req.body.uploadedBy || '系统',
-    status: 'draft' as const,
-    nodes: [],
-  };
-  MOCK_INSPECTION_PLANS.unshift(newPlan);
+  const { year, uploadedBy, nodes } = req.body;
+  const enrichedNodes = enrichNodesWithCorridorId(nodes || []);
+  const newPlan = addInspectionPlan({
+    year: year,
+    uploadedBy: uploadedBy || '系统',
+    status: 'draft',
+    nodes: enrichedNodes,
+  });
   res.json(newPlan);
 });
 

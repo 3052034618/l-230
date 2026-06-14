@@ -199,7 +199,7 @@ export default function ReportDetail() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="font-display text-2xl font-bold text-white">
-                {report.year}年第{report.weekNumber}周运营健康诊断报告
+                {report.region}{report.year}年第{report.weekNumber}周运营健康诊断报告
               </h1>
               <Badge variant="cyan">自动生成</Badge>
             </div>

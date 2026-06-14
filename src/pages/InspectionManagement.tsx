@@ -34,6 +34,7 @@ export default function InspectionManagement() {
   const [uploading, setUploading] = useState(false);
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
   const [parsedNodes, setParsedNodes] = useState<InspectionNode[]>([]);
+  const [parsedYear, setParsedYear] = useState<number | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [selectedFileName, setSelectedFileName] = useState('');
   const { user } = useAuthStore();
@@ -68,6 +69,7 @@ export default function InspectionManagement() {
       try {
         const result = await uploadInspectionExcel(file);
         setParsedNodes(result.nodes);
+        setParsedYear(result.year);
         setShowPreview(true);
       } catch (error) {
         console.error('上传解析失败:', error);
@@ -88,18 +90,18 @@ export default function InspectionManagement() {
   };
 
   const handleConfirmUpload = async () => {
-    if (!user || parsedNodes.length === 0) return;
+    if (!user || parsedNodes.length === 0 || parsedYear === null) return;
 
     setUploading(true);
     try {
-      const currentYear = new Date().getFullYear();
       const newPlan = await createInspectionPlan({
-        year: currentYear,
+        year: parsedYear,
         uploadedBy: user.name,
         nodes: parsedNodes,
       });
       setPlans([newPlan, ...plans]);
       setParsedNodes([]);
+      setParsedYear(null);
       setShowPreview(false);
       setSelectedFileName('');
       setExpandedPlan(newPlan.id);
@@ -113,6 +115,7 @@ export default function InspectionManagement() {
 
   const handleCancelPreview = () => {
     setParsedNodes([]);
+    setParsedYear(null);
     setShowPreview(false);
     setSelectedFileName('');
   };
@@ -162,11 +165,14 @@ export default function InspectionManagement() {
       {showPreview && parsedNodes.length > 0 && (
         <Card
           title="上传预览"
-          subtitle={`文件：${selectedFileName}，共解析出 ${parsedNodes.length} 个巡检节点`}
+          subtitle={`${parsedYear}年度计划 · 文件：${selectedFileName}，共解析出 ${parsedNodes.length} 个巡检节点`}
           glow="cyan"
           rightElement={
             <div className="flex items-center gap-2">
               <Badge variant="success">{parsedNodes.length} 个节点</Badge>
+              {parsedYear && (
+                <Badge variant="cyan">{parsedYear}年度</Badge>
+              )}
               <button
                 onClick={handleCancelPreview}
                 className="flex h-7 w-7 items-center justify-center rounded text-slate-400 transition hover:bg-slate-800 hover:text-white"

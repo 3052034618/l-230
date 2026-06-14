@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getAlert, handleAlert as handleAlertApi, approveAlert as approveAlertApi } from '@/services/alert.service';
+import { getAlert, handleAlert as handleAlertApi, approveAlert as approveAlertApi, startProcessAlert as startProcessAlertApi } from '@/services/alert.service';
 import type { Alert } from '@/types';
-import { ArrowLeft, AlertTriangle, Clock, MapPin, User, Send, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Clock, MapPin, User, CheckCircle, XCircle, Loader2, Play } from 'lucide-react';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
-import { cn, formatDateTime, getRelativeTime } from '@/utils/format';
+import { cn, formatDateTime, getRelativeTime, getAlertTimelineIcon, getAlertTimelineColor } from '@/utils/format';
 import {
   ALERT_STATUS_LABELS,
   ALERT_TYPE_LABELS,
@@ -42,6 +42,17 @@ export default function AlertDetailPage() {
     setSubmitting(true);
     try {
       const updated = await handleAlertApi(id, user.name);
+      setAlert(updated);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleStartProcess = async () => {
+    if (!id || !user) return;
+    setSubmitting(true);
+    try {
+      const updated = await startProcessAlertApi(id, user.name);
       setAlert(updated);
     } finally {
       setSubmitting(false);
@@ -292,6 +303,65 @@ export default function AlertDetailPage() {
               </div>
             </Card>
           )}
+
+          <Card title="操作时间线" subtitle="预警全流程操作记录">
+            <div className="relative">
+              <div className="absolute left-5 top-2 bottom-2 w-px bg-gradient-to-b from-brand-500/40 via-slate-700 to-transparent" />
+              <div className="space-y-1">
+                {[...alert.timeline].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((event) => {
+                  const Icon = getAlertTimelineIcon(event.type);
+                  const colorClass = getAlertTimelineColor(event.type);
+                  const typeLabels: Record<string, string> = {
+                    created: '预警创建',
+                    escalated: '预警升级',
+                    status_changed: '状态变更',
+                    approval: '审批操作',
+                    closed: '预警关闭',
+                  };
+                  return (
+                    <div key={event.id} className="relative pl-12">
+                      <div
+                        className={cn(
+                          'absolute left-0 top-2 flex h-8 w-8 items-center justify-center rounded-full border-2 border-surface-900',
+                          colorClass
+                        )}
+                      >
+                        <Icon size={14} />
+                      </div>
+                      <div className="rounded-lg border border-slate-700/60 bg-surface-900/30 p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="font-display text-sm font-semibold text-white">
+                              {typeLabels[event.type]}
+                            </span>
+                            {event.stepLevel && (
+                              <span className="rounded bg-brand-500/15 px-1.5 py-0.5 text-[10px] font-medium text-brand-400">
+                                第{event.stepLevel}级
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs text-white">{getRelativeTime(event.timestamp)}</div>
+                            <div className="text-[10px] text-slate-500">{formatDateTime(event.timestamp)}</div>
+                          </div>
+                        </div>
+                        <div className="mt-2 text-xs text-slate-400">
+                          操作人：<span className="text-slate-300">{event.operator}</span>
+                        </div>
+                        <div className="mt-1 text-sm text-slate-300">{event.description}</div>
+                        {event.result && (
+                          <div className="mt-2 rounded-md bg-surface-800/60 p-2 text-xs">
+                            <span className="font-medium text-brand-400">处理结果：</span>
+                            <span className="text-slate-300">{event.result}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </Card>
         </div>
 
         <div className="space-y-6">
@@ -305,6 +375,17 @@ export default function AlertDetailPage() {
                 </p>
                 {alert.level === 1 && (
                   <div className="space-y-2">
+                    {alert.status === 'pending' && (
+                      <Button
+                        className="w-full"
+                        variant="outline"
+                        onClick={handleStartProcess}
+                        disabled={submitting}
+                        leftIcon={submitting ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+                      >
+                        {submitting ? '提交中...' : '开始处置'}
+                      </Button>
+                    )}
                     <Button
                       className="w-full"
                       onClick={handleClose}
