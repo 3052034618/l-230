@@ -23,17 +23,21 @@ import { Link } from 'react-router-dom';
 
 export default function Dashboard() {
   const { summary, corridors, fetchAll, isLoading } = useCorridorStore();
-  const { fetchAlerts } = useAlertStore();
+  const { fetchAlerts, startAutoRefresh, stopAutoRefresh } = useAlertStore();
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchAll();
     fetchAlerts();
-    const interval = setInterval(() => {
+    startAutoRefresh(30000);
+    const corridorInterval = setInterval(() => {
       fetchAll();
     }, 30000);
-    return () => clearInterval(interval);
-  }, [fetchAll, fetchAlerts]);
+    return () => {
+      clearInterval(corridorInterval);
+      stopAutoRefresh();
+    };
+  }, [fetchAll, fetchAlerts, startAutoRefresh, stopAutoRefresh]);
 
   return (
     <div className="space-y-6">

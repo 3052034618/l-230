@@ -1,10 +1,27 @@
-import { useEffect, useState } from 'react';
-import { getInspectionPlans, uploadInspectionPlan, getInspectionRoutes } from '@/services/inspection.service';
-import type { InspectionPlan, InspectionRoute } from '@/types';
+import { useEffect, useState, useRef } from 'react';
+import {
+  getInspectionPlans,
+  getInspectionRoutes,
+  uploadInspectionExcel,
+  createInspectionPlan,
+} from '@/services/inspection.service';
+import type { InspectionPlan, InspectionRoute, InspectionNode } from '@/types';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
-import { Upload, FileSpreadsheet, Calendar, MapPin, Package, User, ChevronDown, ChevronRight, Clock, ArrowRight } from 'lucide-react';
+import {
+  Upload,
+  FileSpreadsheet,
+  Calendar,
+  Package,
+  User,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  ArrowRight,
+  X,
+  Check,
+} from 'lucide-react';
 import { cn, formatDate, formatDateTime } from '@/utils/format';
 import { useAuthStore } from '@/store/useAuthStore';
 import { Loader2 } from 'lucide-react';
@@ -16,7 +33,11 @@ export default function InspectionManagement() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
+  const [parsedNodes, setParsedNodes] = useState<InspectionNode[]>([]);
+  const [showPreview, setShowPreview] = useState(false);
+  const [selectedFileName, setSelectedFileName] = useState('');
   const { user } = useAuthStore();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -34,15 +55,70 @@ export default function InspectionManagement() {
     };
   }, []);
 
-  const handleUpload = async () => {
-    if (!user) return;
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    setSelectedFileName(file.name);
+    setUploading(true);
+    setShowPreview(false);
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const result = await uploadInspectionExcel(file);
+        setParsedNodes(result.nodes);
+        setShowPreview(true);
+      } catch (error) {
+        console.error('上传解析失败:', error);
+        alert('文件上传解析失败，请检查文件格式');
+      } finally {
+        setUploading(false);
+      }
+    };
+    reader.onerror = () => {
+      setUploading(false);
+      alert('文件读取失败');
+    };
+    reader.readAsArrayBuffer(file);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleConfirmUpload = async () => {
+    if (!user || parsedNodes.length === 0) return;
+
     setUploading(true);
     try {
-      const newPlan = await uploadInspectionPlan(user.name);
+      const currentYear = new Date().getFullYear();
+      const newPlan = await createInspectionPlan({
+        year: currentYear,
+        uploadedBy: user.name,
+        nodes: parsedNodes,
+      });
       setPlans([newPlan, ...plans]);
+      setParsedNodes([]);
+      setShowPreview(false);
+      setSelectedFileName('');
+      setExpandedPlan(newPlan.id);
+    } catch (error) {
+      console.error('创建计划失败:', error);
+      alert('创建巡检计划失败');
     } finally {
       setUploading(false);
     }
+  };
+
+  const handleCancelPreview = () => {
+    setParsedNodes([]);
+    setShowPreview(false);
+    setSelectedFileName('');
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
   };
 
   if (loading) {
@@ -66,8 +142,15 @@ export default function InspectionManagement() {
               风险预测与路线
             </Button>
           </Link>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
           <Button
-            onClick={handleUpload}
+            onClick={handleUploadClick}
             disabled={uploading}
             leftIcon={uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
           >
@@ -75,6 +158,82 @@ export default function InspectionManagement() {
           </Button>
         </div>
       </div>
+
+      {showPreview && parsedNodes.length > 0 && (
+        <Card
+          title="上传预览"
+          subtitle={`文件：${selectedFileName}，共解析出 ${parsedNodes.length} 个巡检节点`}
+          glow="cyan"
+          rightElement={
+            <div className="flex items-center gap-2">
+              <Badge variant="success">{parsedNodes.length} 个节点</Badge>
+              <button
+                onClick={handleCancelPreview}
+                className="flex h-7 w-7 items-center justify-center rounded text-slate-400 transition hover:bg-slate-800 hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          }
+        >
+          <div className="space-y-3">
+            <div className="max-h-64 overflow-y-auto scrollbar-thin">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface-900/90 text-slate-400 backdrop-blur">
+                  <tr className="text-left">
+                    <th className="px-4 py-2 font-medium">优先级</th>
+                    <th className="px-4 py-2 font-medium">管廊段</th>
+                    <th className="px-4 py-2 font-medium">计划日期</th>
+                    <th className="px-4 py-2 font-medium">巡检人员</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {parsedNodes.map((node, index) => (
+                    <tr
+                      key={index}
+                      className="border-t border-slate-800/60 text-slate-300 hover:bg-surface-800/40"
+                    >
+                      <td className="px-4 py-2.5">
+                        <Badge
+                          variant={
+                            node.priority === 'high'
+                              ? 'danger'
+                              : node.priority === 'medium'
+                              ? 'warning'
+                              : 'success'
+                          }
+                        >
+                          {node.priority === 'high'
+                            ? '高'
+                            : node.priority === 'medium'
+                            ? '中'
+                            : '低'}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-2.5">{node.corridorName}</td>
+                      <td className="px-4 py-2.5">{formatDate(node.plannedDate)}</td>
+                      <td className="px-4 py-2.5">{node.inspector || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-700/60 pt-3">
+              <Button variant="outline" size="sm" onClick={handleCancelPreview} leftIcon={<X size={14} />}>
+                取消
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleConfirmUpload}
+                disabled={uploading}
+                leftIcon={uploading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              >
+                {uploading ? '保存中...' : '确认保存'}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-3">
         <Card

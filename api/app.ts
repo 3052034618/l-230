@@ -11,6 +11,7 @@ import cors from 'cors'
 import path from 'path'
 import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
+import { authMiddleware } from './middleware/auth.js'
 import authRoutes from './routes/auth.js'
 import corridorRoutes from './routes/corridors.js'
 import dashboardRoutes from './routes/dashboard.js'
@@ -31,6 +32,11 @@ const app: express.Application = express()
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
+
+/**
+ * Auth Middleware
+ */
+app.use(authMiddleware)
 
 /**
  * API Routes

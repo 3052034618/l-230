@@ -12,7 +12,8 @@ import ReportsList from '@/pages/ReportsList';
 import ReportDetail from '@/pages/ReportDetail';
 import UserManagement from '@/pages/UserManagement';
 import AppLayout from '@/components/layout/AppLayout';
-import { Loader2 } from 'lucide-react';
+import { hasRole } from '@/utils/permission';
+import type { UserRole } from '@/types';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, restoreAuth } = useAuthStore();
@@ -26,6 +27,16 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
   if (!user) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
+  return <>{children}</>;
+}
+
+function RequireRole({ children, role }: { children: React.ReactNode; role: UserRole }) {
+  const { user } = useAuthStore();
+
+  if (!user || !hasRole(user, role)) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return <>{children}</>;
@@ -75,7 +86,14 @@ export default function App() {
           <Route path="inspection/risk" element={<RiskPrediction />} />
           <Route path="reports" element={<ReportsList />} />
           <Route path="reports/:id" element={<ReportDetail />} />
-          <Route path="system/users" element={<UserManagement />} />
+          <Route
+            path="system/users"
+            element={
+              <RequireRole role="hq_director">
+                <UserManagement />
+              </RequireRole>
+            }
+          />
         </Route>
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

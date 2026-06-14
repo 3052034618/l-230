@@ -15,6 +15,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { cn } from '@/utils/format';
 import { USER_ROLE_LABELS, USER_LEVEL_LABELS } from '@/utils/constants';
 import { hasRole } from '@/utils/permission';
+import type { UserRole } from '@/types';
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: '监控总览', roles: ['hq_director', 'regional_manager', 'duty_officer', 'inspector'] as const },
@@ -25,12 +26,17 @@ const navItems = [
   { to: '/system/users', icon: Users, label: '用户管理', roles: ['hq_director'] as const },
 ];
 
+function hasAnyRole(user: Parameters<typeof hasRole>[0], roles: readonly UserRole[]): boolean {
+  if (!user) return false;
+  return roles.some((role) => hasRole(user, role));
+}
+
 export default function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
 
-  const visibleItems = navItems.filter((item) => user && hasRole(user, item.roles[0]));
+  const visibleItems = navItems.filter((item) => user && hasAnyRole(user, item.roles));
 
   return (
     <aside

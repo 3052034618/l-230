@@ -32,6 +32,16 @@ function hoursAgo(n: number): Date {
   return d;
 }
 
+function minutesAgo(n: number): Date {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - n);
+  return d;
+}
+
+function generateId(): string {
+  return `id-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
 export const MOCK_USERS: User[] = [
   {
     id: 'u1',
@@ -191,7 +201,58 @@ export function generateDevices(corridorId: string): Device[] {
   return devices;
 }
 
-export const MOCK_ALERTS: Alert[] = [
+let alertIdCounter = 10;
+
+function createApprovalFlow(): ApprovalStep[] {
+  return [
+    { id: `ap-${generateId()}`, level: 1, role: 'duty_officer', status: 'pending' },
+    { id: `ap-${generateId()}`, level: 2, role: 'regional_manager', status: 'pending' },
+    { id: `ap-${generateId()}`, level: 3, role: 'hq_director', status: 'pending' },
+  ];
+}
+
+function createAlertFromCorridor(
+  corridor: CorridorSection,
+  type: 'gas_exceed' | 'device_low_availability',
+  sensorInfo?: { sensorType: string; thresholdValue: number; actualValue: number; durationMinutes: number }
+): Alert {
+  const id = `a${++alertIdCounter}`;
+  const now = new Date();
+
+  if (type === 'gas_exceed' && sensorInfo) {
+    return {
+      id,
+      corridorId: corridor.id,
+      corridorName: corridor.name,
+      level: 1,
+      type: 'gas_exceed',
+      title: `${sensorInfo.sensorType === 'gas_ch4' ? '甲烷' : sensorInfo.sensorType === 'gas_co' ? '一氧化碳' : '硫化氢'}浓度超标预警`,
+      description: `${corridor.name}检测到${sensorInfo.sensorType === 'gas_ch4' ? 'CH4' : sensorInfo.sensorType === 'gas_co' ? 'CO' : 'H2S'}浓度${sensorInfo.actualValue}${sensorInfo.sensorType === 'gas_ch4' ? '%LEL' : 'ppm'}，已连续超标${sensorInfo.durationMinutes}分钟`,
+      sensorType: sensorInfo.sensorType,
+      thresholdValue: sensorInfo.thresholdValue,
+      actualValue: sensorInfo.actualValue,
+      durationMinutes: sensorInfo.durationMinutes,
+      status: 'pending',
+      createdAt: formatDate(minutesAgo(sensorInfo.durationMinutes)),
+      deadline: formatDate(new Date(now.getTime() + 2 * 3600 * 1000)),
+    };
+  }
+
+  return {
+    id,
+    corridorId: corridor.id,
+    corridorName: corridor.name,
+    level: 1,
+    type: 'device_low_availability',
+    title: '设备可用率低于阈值',
+    description: `${corridor.name}设备可用率${corridor.deviceAvailability.toFixed(1)}%，已连续低于90%`,
+    status: 'pending',
+    createdAt: formatDate(hoursAgo(1)),
+    deadline: formatDate(new Date(now.getTime() + 2 * 3600 * 1000)),
+  };
+}
+
+export let MOCK_ALERTS: Alert[] = [
   {
     id: 'a1',
     corridorId: 'c5',
@@ -279,6 +340,43 @@ export const MOCK_ALERTS: Alert[] = [
   },
 ];
 
+export function updateAlerts(): Alert[] {
+  const now = new Date();
+  const twoHoursMs = 2 * 60 * 60 * 1000;
+
+  MOCK_ALERTS = MOCK_ALERTS.map((alert) => {
+    if (alert.level === 1 && (alert.status === 'pending' || alert.status === 'processing')) {
+      const createdAt = new Date(alert.createdAt).getTime();
+      const elapsed = now.getTime() - createdAt;
+
+      if (elapsed >= twoHoursMs) {
+        return {
+          ...alert,
+          level: 2,
+          status: 'escalated',
+          approvalFlow: createApprovalFlow(),
+          deadline: formatDate(new Date(now.getTime() + 4 * 3600 * 1000)),
+          description: `${alert.description}（已自动升级为二级预警）`,
+        };
+      }
+    }
+    return alert;
+  });
+
+  MOCK_CORRIDORS.forEach((corridor) => {
+    const hasActiveAlert = MOCK_ALERTS.some(
+      (a) => a.corridorId === corridor.id && a.status !== 'closed' && a.type === 'device_low_availability'
+    );
+
+    if (!hasActiveAlert && corridor.deviceAvailability < 90) {
+      const newAlert = createAlertFromCorridor(corridor, 'device_low_availability');
+      MOCK_ALERTS.push(newAlert);
+    }
+  });
+
+  return MOCK_ALERTS;
+}
+
 export function generateMaintenanceEvents(corridorId: string): MaintenanceEvent[] {
   const types: MaintenanceEvent['type'][] = ['repair', 'inspection', 'alert_response', 'preventive'];
   const events: MaintenanceEvent[] = [];
@@ -305,7 +403,7 @@ export function generateMaintenanceEvents(corridorId: string): MaintenanceEvent[
   return events.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
 }
 
-export const MOCK_INSPECTION_PLANS: InspectionPlan[] = [
+export let MOCK_INSPECTION_PLANS: InspectionPlan[] = [
   {
     id: 'ip1',
     year: 2026,
@@ -322,6 +420,16 @@ export const MOCK_INSPECTION_PLANS: InspectionPlan[] = [
     })),
   },
 ];
+
+export function addInspectionPlan(plan: Omit<InspectionPlan, 'id' | 'uploadedAt'> & { id?: string; uploadedAt?: string }): InspectionPlan {
+  const newPlan: InspectionPlan = {
+    ...plan,
+    id: plan.id || `ip-${Date.now()}`,
+    uploadedAt: plan.uploadedAt || formatDate(new Date()),
+  };
+  MOCK_INSPECTION_PLANS.push(newPlan);
+  return newPlan;
+}
 
 export const MOCK_RISK_PREDICTIONS: RiskPrediction[] = MOCK_CORRIDORS.map((c, i) => ({
   corridorId: c.id,
@@ -402,21 +510,58 @@ export const MOCK_REPORTS: OperationReport[] = Array.from({ length: 8 }).map((_,
   };
 });
 
-export function getDashboardSummary(): DashboardSummary {
-  const onlineCount = MOCK_CORRIDORS.filter((c) => c.status === 'online').length;
+export function filterCorridorsByUser(user: User | undefined | null, corridors: CorridorSection[]): CorridorSection[] {
+  if (!user) return corridors;
+  if (user.level === 'national') return corridors;
+  if (user.level === 'provincial' && user.province) {
+    return corridors.filter((c) => c.province === user.province);
+  }
+  if (user.level === 'municipal' && user.city) {
+    return corridors.filter((c) => c.city === user.city);
+  }
+  return corridors;
+}
+
+export function filterAlertsByUser(user: User | undefined | null, alerts: Alert[]): Alert[] {
+  if (!user) return alerts;
+  if (user.level === 'national') return alerts;
+
+  const corridorIds = filterCorridorsByUser(user, MOCK_CORRIDORS).map((c) => c.id);
+  return alerts.filter((a) => corridorIds.includes(a.corridorId));
+}
+
+export function filterReportsByUser(user: User | undefined | null, reports: OperationReport[]): OperationReport[] {
+  if (!user) return reports;
+  if (user.level === 'national') return reports;
+  return reports;
+}
+
+export function filterPredictionsByUser(user: User | undefined | null, predictions: RiskPrediction[]): RiskPrediction[] {
+  if (!user) return predictions;
+  if (user.level === 'national') return predictions;
+
+  const corridorIds = filterCorridorsByUser(user, MOCK_CORRIDORS).map((c) => c.id);
+  return predictions.filter((p) => corridorIds.includes(p.corridorId));
+}
+
+export function getDashboardSummary(user?: User | null): DashboardSummary {
+  const corridors = filterCorridorsByUser(user, MOCK_CORRIDORS);
+  const alerts = filterAlertsByUser(user, MOCK_ALERTS);
+  const onlineCount = corridors.filter((c) => c.status === 'online').length;
   return {
-    totalCorridors: MOCK_CORRIDORS.length,
-    onlineRate: (onlineCount / MOCK_CORRIDORS.length) * 100,
-    avgHealthIndex: MOCK_CORRIDORS.reduce((s, c) => s + c.healthIndex, 0) / MOCK_CORRIDORS.length,
-    avgDeviceAvailability: MOCK_CORRIDORS.reduce((s, c) => s + c.deviceAvailability, 0) / MOCK_CORRIDORS.length,
-    activeAlerts: MOCK_ALERTS.filter((a) => a.status !== 'closed').length,
-    level1Alerts: MOCK_ALERTS.filter((a) => a.level === 1 && a.status !== 'closed').length,
-    level2Alerts: MOCK_ALERTS.filter((a) => a.level === 2 && a.status !== 'closed').length,
+    totalCorridors: corridors.length,
+    onlineRate: corridors.length > 0 ? (onlineCount / corridors.length) * 100 : 0,
+    avgHealthIndex: corridors.length > 0 ? corridors.reduce((s, c) => s + c.healthIndex, 0) / corridors.length : 0,
+    avgDeviceAvailability: corridors.length > 0 ? corridors.reduce((s, c) => s + c.deviceAvailability, 0) / corridors.length : 0,
+    activeAlerts: alerts.filter((a) => a.status !== 'closed').length,
+    level1Alerts: alerts.filter((a) => a.level === 1 && a.status !== 'closed').length,
+    level2Alerts: alerts.filter((a) => a.level === 2 && a.status !== 'closed').length,
   };
 }
 
-export function getHeatmapData(): HeatmapPoint[] {
-  return MOCK_CORRIDORS.map((c) => ({
+export function getHeatmapData(user?: User | null): HeatmapPoint[] {
+  const corridors = filterCorridorsByUser(user, MOCK_CORRIDORS);
+  return corridors.map((c) => ({
     id: c.id,
     name: c.name,
     city: c.city,
@@ -427,8 +572,9 @@ export function getHeatmapData(): HeatmapPoint[] {
   }));
 }
 
-export function getFailureRanking(limit = 10): FailureRankingItem[] {
-  return [...MOCK_CORRIDORS]
+export function getFailureRanking(limit = 10, user?: User | null): FailureRankingItem[] {
+  const corridors = filterCorridorsByUser(user, MOCK_CORRIDORS);
+  return [...corridors]
     .sort((a, b) => b.failureRate - a.failureRate)
     .slice(0, limit)
     .map((c) => ({

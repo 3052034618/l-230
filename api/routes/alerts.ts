@@ -1,12 +1,13 @@
 import { Router } from 'express';
-import { MOCK_ALERTS } from '../data/mockData';
+import { MOCK_ALERTS, updateAlerts, filterAlertsByUser } from '../data/mockData.js';
 import type { AlertStatus } from '../../src/types';
 
 const router = Router();
 
 router.get('/', (req, res) => {
+  updateAlerts();
   const { status, level } = req.query;
-  let alerts = [...MOCK_ALERTS];
+  let alerts = filterAlertsByUser(req.user, [...MOCK_ALERTS]);
   if (status) {
     alerts = alerts.filter((a) => a.status === (status as AlertStatus));
   }
@@ -18,9 +19,14 @@ router.get('/', (req, res) => {
 });
 
 router.get('/:id', (req, res) => {
+  updateAlerts();
   const alert = MOCK_ALERTS.find((a) => a.id === req.params.id);
   if (!alert) {
     return res.status(404).json({ error: '预警不存在' });
+  }
+  const filteredAlerts = filterAlertsByUser(req.user, [alert]);
+  if (filteredAlerts.length === 0) {
+    return res.status(403).json({ error: '无权限查看该预警' });
   }
   res.json(alert);
 });
