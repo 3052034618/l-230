@@ -174,6 +174,10 @@ export interface OperationReport {
   year: number;
   region: string;
   level?: string;
+  drillDownLevel?: 'national' | 'provincial' | 'municipal' | 'corridor';
+  provinceCode?: string;
+  cityCode?: string;
+  corridorId?: string;
   startDate: string;
   endDate: string;
   generatedAt: string;
@@ -194,7 +198,13 @@ export interface OperationReport {
     name: string;
     healthIndex: number;
     failureRate: number;
+    city?: string;
   }[];
+  drillDownOptions?: {
+    provinces?: { code: string; name: string; corridorCount: number }[];
+    cities?: { code: string; name: string; corridorCount: number }[];
+    corridors?: { id: string; name: string; healthIndex: number }[];
+  };
 }
 
 export type UserRole = 'hq_director' | 'regional_manager' | 'duty_officer' | 'inspector';

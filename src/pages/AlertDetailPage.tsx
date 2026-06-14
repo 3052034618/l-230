@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getAlert, handleAlert as handleAlertApi, approveAlert as approveAlertApi, startProcessAlert as startProcessAlertApi } from '@/services/alert.service';
 import type { Alert } from '@/types';
-import { ArrowLeft, AlertTriangle, Clock, MapPin, User, CheckCircle, XCircle, Loader2, Play } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Clock, MapPin, User, CheckCircle, XCircle, Loader2, Play, CheckCircle2, Fan } from 'lucide-react';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
@@ -83,6 +83,21 @@ export default function AlertDetailPage() {
       </div>
     );
   }
+
+  const sortedTimeline = [...alert.timeline].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+
+  const lastApprovalEvent = sortedTimeline.find(
+    (e) => e.type === 'approval' || e.type === 'status_changed'
+  );
+  const lastApprovalConclusion = lastApprovalEvent
+    ? lastApprovalEvent.result || lastApprovalEvent.description || '暂无'
+    : '暂无';
+
+  const hasEmergencyVentilation = alert.timeline.some(
+    (e) => e.type === 'status_changed' && e.description.includes('紧急排风')
+  );
 
   return (
     <div className="space-y-6">
@@ -178,6 +193,33 @@ export default function AlertDetailPage() {
                   <div className="mt-1 text-sm text-amber-400">
                     <Clock size={14} className="inline mr-1" />
                     {formatDateTime(alert.deadline)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">最后审批结论</div>
+                  <div className="mt-1 flex items-center gap-1 text-sm text-white">
+                    {lastApprovalEvent?.result?.includes('通过') || lastApprovalEvent?.description?.includes('通过') ? (
+                      <CheckCircle2 size={14} className="text-emerald-400" />
+                    ) : lastApprovalEvent?.result?.includes('驳回') || lastApprovalEvent?.description?.includes('驳回') ? (
+                      <XCircle size={14} className="text-red-400" />
+                    ) : null}
+                    {lastApprovalConclusion}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">排风联动状态</div>
+                  <div className="mt-1 flex items-center gap-2">
+                    {hasEmergencyVentilation ? (
+                      <Badge variant="success">
+                        <Fan size={12} />
+                        已启动
+                      </Badge>
+                    ) : (
+                      <Badge variant="default">
+                        <Fan size={12} />
+                        未启动
+                      </Badge>
+                    )}
                   </div>
                 </div>
               </div>
@@ -308,9 +350,8 @@ export default function AlertDetailPage() {
             <div className="relative">
               <div className="absolute left-5 top-2 bottom-2 w-px bg-gradient-to-b from-brand-500/40 via-slate-700 to-transparent" />
               <div className="space-y-1">
-                {[...alert.timeline].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((event) => {
+                {sortedTimeline.map((event) => {
                   const Icon = getAlertTimelineIcon(event.type);
-                  const colorClass = getAlertTimelineColor(event.type);
                   const typeLabels: Record<string, string> = {
                     created: '预警创建',
                     escalated: '预警升级',
@@ -318,26 +359,73 @@ export default function AlertDetailPage() {
                     approval: '审批操作',
                     closed: '预警关闭',
                   };
+
+                  const isApproval = event.type === 'approval';
+                  const isApproved = isApproval && (event.result?.includes('通过') || event.description?.includes('通过'));
+                  const isRejected = isApproval && (event.result?.includes('驳回') || event.description?.includes('驳回'));
+
+                  const isStatusChanged = event.type === 'status_changed';
+                  const isVentilation = isStatusChanged && event.description.includes('紧急排风');
+                  const isStatusRejected = isStatusChanged && event.description.includes('驳回');
+
+                  let iconColorClass = getAlertTimelineColor(event.type);
+                  let cardBorderClass = 'border-slate-700/60';
+                  let cardBgClass = 'bg-surface-900/30';
+                  let stepLevelBadge: React.ReactNode = null;
+
+                  if (isApproval) {
+                    if (isApproved) {
+                      iconColorClass = 'bg-emerald-500/20 text-emerald-400 border-emerald-500';
+                    } else if (isRejected) {
+                      iconColorClass = 'bg-red-500/20 text-red-400 border-red-500';
+                    }
+                    if (event.stepLevel) {
+                      stepLevelBadge = (
+                        <Badge variant={isApproved ? 'success' : isRejected ? 'danger' : 'cyan'}>
+                          第{event.stepLevel}级
+                        </Badge>
+                      );
+                    }
+                  }
+
+                  if (isVentilation) {
+                    iconColorClass = 'bg-cyan-500/20 text-cyan-400 border-cyan-500';
+                    cardBorderClass = 'border-cyan-500/40';
+                    cardBgClass = 'bg-cyan-500/5';
+                  } else if (isStatusRejected) {
+                    iconColorClass = 'bg-red-500/20 text-red-400 border-red-500';
+                    cardBorderClass = 'border-red-500/40';
+                    cardBgClass = 'bg-red-500/5';
+                  }
+
                   return (
                     <div key={event.id} className="relative pl-12">
                       <div
                         className={cn(
                           'absolute left-0 top-2 flex h-8 w-8 items-center justify-center rounded-full border-2 border-surface-900',
-                          colorClass
+                          iconColorClass
                         )}
                       >
-                        <Icon size={14} />
+                        {isVentilation ? <Fan size={14} /> : <Icon size={14} />}
                       </div>
-                      <div className="rounded-lg border border-slate-700/60 bg-surface-900/30 p-4">
+                      <div className={cn('rounded-lg border p-4', cardBorderClass, cardBgClass)}>
                         <div className="flex items-start justify-between">
                           <div className="flex items-center gap-2">
                             <span className="font-display text-sm font-semibold text-white">
                               {typeLabels[event.type]}
                             </span>
-                            {event.stepLevel && (
-                              <span className="rounded bg-brand-500/15 px-1.5 py-0.5 text-[10px] font-medium text-brand-400">
-                                第{event.stepLevel}级
-                              </span>
+                            {stepLevelBadge}
+                            {isVentilation && (
+                              <Badge variant="cyan">
+                                <Fan size={12} />
+                                紧急排风
+                              </Badge>
+                            )}
+                            {isStatusRejected && (
+                              <Badge variant="danger">
+                                <XCircle size={12} />
+                                驳回
+                              </Badge>
                             )}
                           </div>
                           <div className="text-right">
@@ -348,11 +436,28 @@ export default function AlertDetailPage() {
                         <div className="mt-2 text-xs text-slate-400">
                           操作人：<span className="text-slate-300">{event.operator}</span>
                         </div>
-                        <div className="mt-1 text-sm text-slate-300">{event.description}</div>
+                        <div className={cn(
+                          'mt-1 text-sm',
+                          isVentilation ? 'text-cyan-300' : isStatusRejected || isRejected ? 'text-red-300' : 'text-slate-300'
+                        )}>
+                          {event.description}
+                        </div>
                         {event.result && (
-                          <div className="mt-2 rounded-md bg-surface-800/60 p-2 text-xs">
-                            <span className="font-medium text-brand-400">处理结果：</span>
-                            <span className="text-slate-300">{event.result}</span>
+                          <div className={cn(
+                            'mt-2 rounded-md p-2 text-xs',
+                            isApproved || isVentilation ? 'bg-emerald-500/10' : isRejected || isStatusRejected ? 'bg-red-500/10' : 'bg-surface-800/60'
+                          )}>
+                            <span className={cn(
+                              'font-medium',
+                              isApproved || isVentilation ? 'text-emerald-400' : isRejected || isStatusRejected ? 'text-red-400' : 'text-brand-400'
+                            )}>
+                              处理结果：
+                            </span>
+                            <span className={cn(
+                              isApproved || isVentilation ? 'text-emerald-300' : isRejected || isStatusRejected ? 'text-red-300' : 'text-slate-300'
+                            )}>
+                              {event.result}
+                            </span>
                           </div>
                         )}
                       </div>

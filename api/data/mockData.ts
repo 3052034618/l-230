@@ -90,6 +90,7 @@ interface GasExceedTracker {
       exceedStartTime: string | null;
       currentValue: number;
       peakValue: number;
+      handled: boolean;
     };
   };
 }
@@ -105,6 +106,7 @@ function getGasExceedInfo(corridorId: string, sensorType: string) {
       exceedStartTime: null,
       currentValue: 0,
       peakValue: 0,
+      handled: false,
     };
   }
   return gasExceedTracker[corridorId][sensorType];
@@ -235,10 +237,14 @@ export function generateSensorTrend(corridorId: string, sensorType: string): Sen
   const warn = sensor?.warn || base * 1.5;
 
   const activeAlert = MOCK_ALERTS.find(
-    (a) => a.corridorId === corridorId && a.status !== 'closed' && a.type === 'gas_exceed' && a.sensorType === sensorType
+    (a) => a.corridorId === corridorId && a.status !== 'closed' && a.status !== 'rejected' && a.type === 'gas_exceed' && a.sensorType === sensorType
   );
 
   const exceedInfo = getGasExceedInfo(corridorId, sensorType);
+
+  if (!activeAlert && exceedInfo.handled) {
+    exceedInfo.exceedStartTime = null;
+  }
 
   for (let i = 168; i >= 0; i -= 1) {
     const time = new Date(now.getTime() - i * 3600 * 1000);
@@ -246,14 +252,14 @@ export function generateSensorTrend(corridorId: string, sensorType: string): Sen
     const randomVariation = (Math.random() - 0.5) * base * 0.1;
     let value = base + dayVariation + randomVariation;
 
-    if (activeAlert && i < 24) {
+    if (activeAlert && i < 24 && !exceedInfo.handled) {
       const exceedMultiplier = 1.5 + (24 - i) / 24 * 0.8;
       value = warn * exceedMultiplier;
-    } else if (activeAlert && i >= 24 && i < 48) {
+    } else if (activeAlert && i >= 24 && i < 48 && !exceedInfo.handled) {
       value = warn * 1.2;
     }
 
-    if (i < 2 && activeAlert && activeAlert.status === 'closed') {
+    if (i < 2 && (activeAlert?.status === 'closed' || exceedInfo.handled)) {
       value = base * 0.9;
     }
 
@@ -263,7 +269,7 @@ export function generateSensorTrend(corridorId: string, sensorType: string): Sen
     });
   }
 
-  if (activeAlert) {
+  if (activeAlert && !exceedInfo.handled) {
     exceedInfo.exceedStartTime = activeAlert.createdAt;
     exceedInfo.currentValue = points[points.length - 1].value;
     exceedInfo.peakValue = Math.max(...points.map((p) => p.value));
@@ -642,8 +648,9 @@ export function updateAlerts(): Alert[] {
         (a) => a.corridorId === corridor.id && a.status !== 'closed' && a.status !== 'rejected' && a.type === 'gas_exceed' && a.sensorType === sensorType
       );
 
-      if (!hasActiveGasAlert) {
-        const exceedInfo = getGasExceedInfo(corridor.id, sensorType);
+      const exceedInfo = getGasExceedInfo(corridor.id, sensorType);
+
+      if (!hasActiveGasAlert && !exceedInfo.handled) {
         if (exceedInfo.exceedStartTime) {
           const exceedDuration = now.getTime() - new Date(exceedInfo.exceedStartTime).getTime();
           if (exceedDuration >= tenMinutesMs) {
@@ -666,6 +673,53 @@ export function updateAlerts(): Alert[] {
   });
 
   return MOCK_ALERTS;
+}
+
+export function triggerGasAlert(
+  corridorId: string,
+  sensorType: string,
+  durationMinutes: number,
+  actualValue: number
+): Alert | undefined {
+  const corridor = MOCK_CORRIDORS.find((c) => c.id === corridorId);
+  if (!corridor) return undefined;
+
+  const sensor = SENSOR_TYPES.find((s) => s.type === sensorType);
+  const exceedInfo = getGasExceedInfo(corridorId, sensorType);
+
+  exceedInfo.exceedStartTime = formatDate(minutesAgo(durationMinutes));
+  exceedInfo.currentValue = actualValue;
+  exceedInfo.peakValue = actualValue * 1.2;
+  exceedInfo.handled = false;
+
+  const hasActiveGasAlert = MOCK_ALERTS.some(
+    (a) => a.corridorId === corridorId && a.status !== 'closed' && a.status !== 'rejected' && a.type === 'gas_exceed' && a.sensorType === sensorType
+  );
+
+  if (!hasActiveGasAlert) {
+    const newAlert = createAlertFromCorridor(
+      corridor,
+      'gas_exceed',
+      {
+        sensorType,
+        thresholdValue: sensor?.warn || 25,
+        actualValue,
+        durationMinutes,
+      }
+    );
+    MOCK_ALERTS.push(newAlert);
+    return newAlert;
+  }
+
+  return MOCK_ALERTS.find(
+    (a) => a.corridorId === corridorId && a.status !== 'closed' && a.status !== 'rejected' && a.type === 'gas_exceed' && a.sensorType === sensorType
+  );
+}
+
+export function markGasHandled(corridorId: string, sensorType: string): void {
+  const exceedInfo = getGasExceedInfo(corridorId, sensorType);
+  exceedInfo.handled = true;
+  exceedInfo.exceedStartTime = null;
 }
 
 export function generateMaintenanceEvents(corridorId: string): MaintenanceEvent[] {
@@ -767,25 +821,74 @@ export const MOCK_INSPECTION_ROUTES: InspectionRoute[] = [
 
 const reportCache = new Map<string, OperationReport>();
 
-export function generateReportForUser(user: User | undefined | null, weekOffset = 0): OperationReport {
-  const regionCode = getUserRegionCode(user);
-  const level = user?.level || 'national';
+interface ReportDrillParams {
+  provinceCode?: string;
+  cityCode?: string;
+  corridorId?: string;
+  drillDownLevel?: 'national' | 'provincial' | 'municipal' | 'corridor';
+}
+
+export function generateReportForUser(
+  user: User | undefined | null,
+  weekOffset = 0,
+  drillParams?: ReportDrillParams
+): OperationReport {
+  let regionCode = getUserRegionCode(user);
+  const userLevel = user?.level || 'national';
   let regionName = '全国';
-  if (level === 'provincial' && user?.province) {
-    regionName = user.province;
-  } else if (level === 'municipal' && user?.city) {
-    regionName = user.city;
+  let drillDownLevel: ReportDrillParams['drillDownLevel'] = drillParams?.drillDownLevel;
+  let targetProvince = drillParams?.provinceCode;
+  let targetCity = drillParams?.cityCode;
+  let targetCorridorId = drillParams?.corridorId;
+
+  if (!drillDownLevel) {
+    drillDownLevel = userLevel === 'provincial' ? 'provincial' : userLevel === 'municipal' ? 'municipal' : 'national';
   }
+
+  let filteredCorridors = MOCK_CORRIDORS;
+
+  if (targetCorridorId) {
+    drillDownLevel = 'corridor';
+    const corridor = MOCK_CORRIDORS.find((c) => c.id === targetCorridorId);
+    if (corridor) {
+      regionName = corridor.name;
+      filteredCorridors = [corridor];
+      regionCode = `${getCityCode(corridor.city)}-${corridor.id}`;
+    }
+  } else if (targetCity) {
+    drillDownLevel = 'municipal';
+    const cityCorridors = MOCK_CORRIDORS.filter((c) => getCityCode(c.city) === targetCity);
+    if (cityCorridors.length > 0) {
+      regionName = cityCorridors[0].city;
+      filteredCorridors = cityCorridors;
+      regionCode = targetCity;
+    }
+  } else if (targetProvince) {
+    drillDownLevel = 'provincial';
+    const provinceCorridors = MOCK_CORRIDORS.filter((c) => getProvinceCode(c.province) === targetProvince);
+    if (provinceCorridors.length > 0) {
+      regionName = provinceCorridors[0].province;
+      filteredCorridors = provinceCorridors;
+      regionCode = targetProvince;
+    }
+  } else if (userLevel === 'provincial' && user?.province) {
+    regionName = user.province;
+    filteredCorridors = MOCK_CORRIDORS.filter((c) => c.province === user.province);
+  } else if (userLevel === 'municipal' && user?.city) {
+    regionName = user.city;
+    filteredCorridors = MOCK_CORRIDORS.filter((c) => c.city === user.city);
+  }
+
   const year = 2026;
   const weekNum = 24 - weekOffset;
-  const reportId = `rep-${regionCode}-${year}-w${weekNum}`;
+  const reportId = `rep-${regionCode}-${year}-w${weekNum}-${drillDownLevel}`;
 
   if (reportCache.has(reportId)) {
     return reportCache.get(reportId)!;
   }
 
-  const corridors = filterCorridorsByUser(user, MOCK_CORRIDORS);
-  const alerts = filterAlertsByUser(user, MOCK_ALERTS);
+  const corridors = filteredCorridors;
+  const alerts = MOCK_ALERTS.filter((a) => corridors.some((c) => c.id === a.corridorId));
 
   const start = daysAgo((weekOffset + 1) * 7);
   const end = daysAgo(weekOffset * 7);
@@ -808,19 +911,45 @@ export function generateReportForUser(user: User | undefined | null, weekOffset 
     recommendations.push(`${highFailureCorridors[0].name}设备故障率偏高，建议安排全面检修`);
   }
 
-  if (level === 'national') {
+  if (drillDownLevel === 'national') {
     recommendations.push('统筹全国管廊运维资源，向高风险区域倾斜');
     recommendations.push('优化跨区域应急响应联动机制');
-  } else if (level === 'provincial') {
+  } else if (drillDownLevel === 'provincial') {
     recommendations.push(`${regionName}省内管廊通风设备备件库存需补充`);
     recommendations.push('加强省内各城市管廊运维人员培训');
-  } else if (level === 'municipal') {
+  } else if (drillDownLevel === 'municipal') {
     recommendations.push(`${regionName}管廊气体传感器需安排校准`);
     recommendations.push('优化本市巡检路线，提高巡检效率');
+  } else if (drillDownLevel === 'corridor') {
+    recommendations.push(`${regionName}建议增加重点设备预防性维护`);
+    recommendations.push(`针对${regionName}传感器数据定期复核校准`);
   }
 
-  if (corridors.length > 3) {
+  if (corridors.length > 3 && drillDownLevel !== 'corridor') {
     recommendations.push('优化高风险区域的传感器布点密度');
+  }
+
+  const drillDownOptions: OperationReport['drillDownOptions'] = {};
+  if (drillDownLevel === 'national') {
+    const provinces = Array.from(new Set(corridors.map((c) => c.province)));
+    drillDownOptions.provinces = provinces.map((p) => ({
+      code: getProvinceCode(p),
+      name: p,
+      corridorCount: corridors.filter((c) => c.province === p).length,
+    }));
+  } else if (drillDownLevel === 'provincial') {
+    const cities = Array.from(new Set(corridors.map((c) => c.city)));
+    drillDownOptions.cities = cities.map((ci) => ({
+      code: getCityCode(ci),
+      name: ci,
+      corridorCount: corridors.filter((c) => c.city === ci).length,
+    }));
+  } else if (drillDownLevel === 'municipal') {
+    drillDownOptions.corridors = corridors.map((c) => ({
+      id: c.id,
+      name: c.name,
+      healthIndex: c.healthIndex,
+    }));
   }
 
   const report: OperationReport = {
@@ -828,7 +957,15 @@ export function generateReportForUser(user: User | undefined | null, weekOffset 
     weekNumber: weekNum,
     year,
     region: regionName,
-    level,
+    level: drillDownLevel,
+    drillDownLevel,
+    provinceCode: drillDownLevel === 'provincial' || drillDownLevel === 'municipal' || drillDownLevel === 'corridor'
+      ? targetProvince || (user?.province ? getProvinceCode(user.province) : undefined)
+      : undefined,
+    cityCode: drillDownLevel === 'municipal' || drillDownLevel === 'corridor'
+      ? targetCity || (user?.city ? getCityCode(user.city) : undefined)
+      : undefined,
+    corridorId: drillDownLevel === 'corridor' ? targetCorridorId : undefined,
     startDate: formatDate(start),
     endDate: formatDate(end),
     generatedAt: formatDate(end),
@@ -859,30 +996,44 @@ export function generateReportForUser(user: User | undefined | null, weekOffset 
       name: c.name,
       healthIndex: c.healthIndex,
       failureRate: c.failureRate,
+      city: c.city,
     })),
+    drillDownOptions,
   };
 
   reportCache.set(reportId, report);
   return report;
 }
 
-export function generateAllReportsForUser(user: User | undefined | null): OperationReport[] {
+export function generateAllReportsForUser(user: User | undefined | null, drillParams?: ReportDrillParams): OperationReport[] {
   const reports: OperationReport[] = [];
   for (let i = 0; i < 8; i++) {
-    reports.push(generateReportForUser(user, i));
+    reports.push(generateReportForUser(user, i, drillParams));
   }
   return reports;
 }
 
 export let MOCK_REPORTS: OperationReport[] = generateAllReportsForUser(null);
 
-export function getReports(user?: User | null): OperationReport[] {
-  return generateAllReportsForUser(user);
+export function getReports(user?: User | null, drillParams?: ReportDrillParams): OperationReport[] {
+  return generateAllReportsForUser(user, drillParams);
 }
 
 export function getReportById(id: string, user?: User | null): OperationReport | undefined {
-  const allReports = generateAllReportsForUser(user);
-  return allReports.find((r) => r.id === id);
+  const allParams: ReportDrillParams[] = [
+    {},
+    { drillDownLevel: 'provincial', provinceCode: 'gd' },
+    { drillDownLevel: 'provincial', provinceCode: 'bj' },
+    { drillDownLevel: 'municipal', cityCode: 'gz' },
+    { drillDownLevel: 'municipal', cityCode: 'bj' },
+  ];
+  for (const dp of allParams) {
+    const allReports = generateAllReportsForUser(user, dp);
+    const found = allReports.find((r) => r.id === id);
+    if (found) return found;
+  }
+  const baseReports = generateAllReportsForUser(user);
+  return baseReports.find((r) => r.id === id);
 }
 
 export function filterCorridorsByUser(user: User | undefined | null, corridors: CorridorSection[]): CorridorSection[] {

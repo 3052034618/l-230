@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { MOCK_ALERTS, updateAlerts, filterAlertsByUser, addTimelineEvent } from '../data/mockData.js';
+import { MOCK_ALERTS, updateAlerts, filterAlertsByUser, addTimelineEvent, triggerGasAlert, markGasHandled } from '../data/mockData.js';
 import type { AlertStatus } from '../../src/types';
 
 const router = Router();
@@ -39,6 +39,10 @@ router.post('/:id/handle', (req, res) => {
   alert.status = 'closed';
   alert.handler = req.body.handler || '系统';
 
+  if (alert.type === 'gas_exceed' && alert.sensorType) {
+    markGasHandled(alert.corridorId, alert.sensorType);
+  }
+
   addTimelineEvent(
     alert.id,
     'closed',
@@ -59,6 +63,10 @@ router.post('/:id/start-process', (req, res) => {
   const oldStatus = alert.status;
   alert.status = 'processing';
   alert.handler = req.body.handler || '系统';
+
+  if (alert.type === 'gas_exceed' && alert.sensorType) {
+    markGasHandled(alert.corridorId, alert.sensorType);
+  }
 
   addTimelineEvent(
     alert.id,
@@ -132,6 +140,23 @@ router.post('/:id/approve', (req, res) => {
     }
   }
 
+  res.json(alert);
+});
+
+router.post('/trigger', (req, res) => {
+  const { corridorId, sensorType, durationMinutes, actualValue } = req.body;
+  if (!corridorId || !sensorType) {
+    return res.status(400).json({ error: '缺少必要参数 corridorId 或 sensorType' });
+  }
+  const alert = triggerGasAlert(
+    corridorId,
+    sensorType,
+    durationMinutes || 10,
+    actualValue || 30
+  );
+  if (!alert) {
+    return res.status(404).json({ error: '管廊不存在' });
+  }
   res.json(alert);
 });
 

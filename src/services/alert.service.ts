@@ -28,3 +28,13 @@ export async function approveAlert(
   const { data } = await api.post<Alert>(`/alerts/${id}/approve`, params);
   return data;
 }
+
+export async function triggerGasAlert(params: {
+  corridorId: string;
+  sensorType: string;
+  durationMinutes?: number;
+  actualValue?: number;
+}) {
+  const { data } = await api.post<Alert>('/alerts/trigger', params);
+  return data;
+}

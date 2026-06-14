@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Alert, AlertStatus } from '@/types';
-import { getAlerts, handleAlert, approveAlert } from '@/services/alert.service';
+import { getAlerts, handleAlert, approveAlert, startProcessAlert, triggerGasAlert } from '@/services/alert.service';
 
 interface AlertState {
   alerts: Alert[];
@@ -8,10 +8,17 @@ interface AlertState {
   autoRefreshInterval: number | null;
   fetchAlerts: (params?: { status?: AlertStatus; level?: number }) => Promise<void>;
   handleAlert: (id: string, handler: string) => Promise<void>;
+  startProcessAlert: (id: string, handler: string) => Promise<void>;
   approveAlert: (
     id: string,
     params: { stepId: string; status: 'approved' | 'rejected'; comment?: string; approver: string }
   ) => Promise<void>;
+  triggerGasAlert: (params: {
+    corridorId: string;
+    sensorType: string;
+    durationMinutes?: number;
+    actualValue?: number;
+  }) => Promise<Alert | undefined>;
   startAutoRefresh: (intervalMs?: number) => void;
   stopAutoRefresh: () => void;
 }
@@ -38,11 +45,28 @@ export const useAlertStore = create<AlertState>((set, get) => ({
     });
   },
 
+  startProcessAlert: async (id: string, handler: string) => {
+    const updated = await startProcessAlert(id, handler);
+    set({
+      alerts: get().alerts.map((a) => (a.id === id ? updated : a)),
+    });
+  },
+
   approveAlert: async (id, params) => {
     const updated = await approveAlert(id, params);
     set({
       alerts: get().alerts.map((a) => (a.id === id ? updated : a)),
     });
+  },
+
+  triggerGasAlert: async (params) => {
+    try {
+      const alert = await triggerGasAlert(params);
+      await get().fetchAlerts();
+      return alert;
+    } catch (e) {
+      return undefined;
+    }
   },
 
   startAutoRefresh: (intervalMs = 30000) => {

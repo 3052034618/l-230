@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useState, useMemo } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { getReport } from '@/services/report.service';
 import type { OperationReport } from '@/types';
 import Card from '@/components/ui/Card';
@@ -19,15 +19,53 @@ import {
   Lightbulb,
   Calendar,
   Loader2,
+  Home,
+  Building2,
+  MapPin,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import { cn, formatDate, formatNumber, formatPercent } from '@/utils/format';
 import type { EChartsOption } from 'echarts';
 
+type DrillDownLevel = 'national' | 'provincial' | 'municipal' | 'corridor';
+
+interface DrillParams {
+  provinceCode?: string;
+  cityCode?: string;
+  corridorId?: string;
+  drillDownLevel?: DrillDownLevel;
+}
+
+interface BreadcrumbItem {
+  label: string;
+  level: DrillDownLevel;
+  icon: React.ReactNode;
+  clickable: boolean;
+  params?: DrillParams;
+}
+
 export default function ReportDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [report, setReport] = useState<OperationReport | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const drillParams: DrillParams = useMemo(() => {
+    const params: DrillParams = {};
+    if (searchParams.get('provinceCode')) params.provinceCode = searchParams.get('provinceCode')!;
+    if (searchParams.get('cityCode')) params.cityCode = searchParams.get('cityCode')!;
+    if (searchParams.get('corridorId')) params.corridorId = searchParams.get('corridorId')!;
+    if (searchParams.get('drillDownLevel')) params.drillDownLevel = searchParams.get('drillDownLevel') as DrillDownLevel;
+    return params;
+  }, [searchParams]);
+
+  const currentLevel: DrillDownLevel = useMemo(() => {
+    if (drillParams.drillDownLevel) return drillParams.drillDownLevel;
+    if (report?.drillDownLevel) return report.drillDownLevel;
+    return 'national';
+  }, [drillParams.drillDownLevel, report]);
 
   useEffect(() => {
     if (!id) return;
@@ -40,6 +78,77 @@ export default function ReportDetail() {
       mounted = false;
     };
   }, [id]);
+
+  const breadcrumbs = useMemo<BreadcrumbItem[]>(() => {
+    const items: BreadcrumbItem[] = [];
+
+    items.push({
+      label: '全国',
+      level: 'national',
+      icon: <Home size={14} />,
+      clickable: currentLevel !== 'national',
+      params: { drillDownLevel: 'national' },
+    });
+
+    if (currentLevel === 'provincial' || currentLevel === 'municipal' || currentLevel === 'corridor') {
+      const provinceName = report?.drillDownOptions?.provinces?.find(
+        (p) => p.code === drillParams.provinceCode
+      )?.name;
+      if (provinceName) {
+        items.push({
+          label: provinceName,
+          level: 'provincial',
+          icon: <Building2 size={14} />,
+          clickable: currentLevel !== 'provincial',
+          params: { drillDownLevel: 'provincial', provinceCode: drillParams.provinceCode },
+        });
+      }
+    }
+
+    if (currentLevel === 'municipal' || currentLevel === 'corridor') {
+      const cityName = report?.drillDownOptions?.cities?.find(
+        (c) => c.code === drillParams.cityCode
+      )?.name;
+      if (cityName) {
+        items.push({
+          label: cityName,
+          level: 'municipal',
+          icon: <MapPin size={14} />,
+          clickable: currentLevel !== 'municipal',
+          params: {
+            drillDownLevel: 'municipal',
+            provinceCode: drillParams.provinceCode,
+            cityCode: drillParams.cityCode,
+          },
+        });
+      }
+    }
+
+    if (currentLevel === 'corridor' && drillParams.corridorId) {
+      const corridorName = report?.drillDownOptions?.corridors?.find(
+        (c) => c.id === drillParams.corridorId
+      )?.name;
+      if (corridorName) {
+        items.push({
+          label: corridorName,
+          level: 'corridor',
+          icon: <ChevronDown size={14} />,
+          clickable: false,
+        });
+      }
+    }
+
+    return items;
+  }, [report, currentLevel, drillParams]);
+
+  const handleBreadcrumbClick = (crumb: BreadcrumbItem) => {
+    if (!crumb.clickable || !crumb.params) return;
+    const search = new URLSearchParams();
+    Object.entries(crumb.params).forEach(([k, v]) => {
+      if (v !== undefined) search.set(k, v);
+    });
+    navigate(`/reports?${search.toString()}`);
+  };
 
   if (loading || !report) {
     return (
@@ -184,6 +293,32 @@ export default function ReportDetail() {
     ],
   };
 
+  const handleDrillProvince = (code: string) => {
+    const search = new URLSearchParams();
+    search.set('drillDownLevel', 'provincial');
+    search.set('provinceCode', code);
+    navigate(`/reports?${search.toString()}`);
+  };
+
+  const handleDrillCity = (code: string) => {
+    const search = new URLSearchParams();
+    search.set('drillDownLevel', 'municipal');
+    if (drillParams.provinceCode) search.set('provinceCode', drillParams.provinceCode);
+    search.set('cityCode', code);
+    navigate(`/reports?${search.toString()}`);
+  };
+
+  const handleDrillCorridor = (corridorId: string) => {
+    const search = new URLSearchParams();
+    search.set('drillDownLevel', 'corridor');
+    if (drillParams.provinceCode) search.set('provinceCode', drillParams.provinceCode);
+    if (drillParams.cityCode) search.set('cityCode', drillParams.cityCode);
+    search.set('corridorId', corridorId);
+    navigate(`/reports?${search.toString()}`);
+  };
+
+  const drillOptions = report.drillDownOptions;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -197,6 +332,27 @@ export default function ReportDetail() {
             返回
           </Button>
           <div>
+            <div className="mb-2 flex items-center gap-1 text-xs text-slate-400">
+              {breadcrumbs.map((crumb, idx) => (
+                <div key={idx} className="flex items-center gap-1">
+                  {idx > 0 && <ChevronRight size={12} className="text-slate-600" />}
+                  <button
+                    type="button"
+                    onClick={() => handleBreadcrumbClick(crumb)}
+                    className={cn(
+                      'flex items-center gap-1 rounded px-1.5 py-0.5 transition',
+                      crumb.clickable
+                        ? 'cursor-pointer text-slate-400 hover:bg-slate-800 hover:text-brand-300'
+                        : 'cursor-default text-slate-300'
+                    )}
+                    disabled={!crumb.clickable}
+                  >
+                    {crumb.icon}
+                    <span>{crumb.label}</span>
+                  </button>
+                </div>
+              ))}
+            </div>
             <div className="flex items-center gap-3">
               <h1 className="font-display text-2xl font-bold text-white">
                 {report.region}{report.year}年第{report.weekNumber}周运营健康诊断报告
@@ -216,6 +372,120 @@ export default function ReportDetail() {
           导出PDF
         </Button>
       </div>
+
+      {currentLevel !== 'corridor' && drillOptions && (
+        <Card
+          title={
+            currentLevel === 'national'
+              ? '下钻分析·各省'
+              : currentLevel === 'provincial'
+                ? '下钻分析·各市'
+                : '下钻分析·各管廊'
+          }
+          subtitle={
+            currentLevel === 'national'
+              ? '选择省份查看该区域运营健康状况'
+              : currentLevel === 'provincial'
+                ? '选择城市查看该区域运营健康状况'
+                : '选择管廊查看运营健康状况'
+          }
+        >
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {currentLevel === 'national' &&
+              drillOptions.provinces?.map((province) => (
+                <button
+                  key={province.code}
+                  type="button"
+                  onClick={() => handleDrillProvince(province.code)}
+                  className="group flex items-center justify-between rounded-xl border border-slate-700/60 bg-surface-900/40 p-4 text-left transition-all hover:border-brand-500/40 hover:bg-surface-800/60"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/20 text-brand-400 group-hover:bg-brand-500/30">
+                      <Building2 size={18} />
+                    </div>
+                    <div>
+                      <div className="font-medium text-white group-hover:text-brand-300">
+                        {province.name}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        共 {province.corridorCount} 条管廊
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronRight
+                    size={16}
+                    className="text-slate-600 opacity-0 transition group-hover:opacity-100 group-hover:text-brand-400"
+                  />
+                </button>
+              ))}
+
+            {currentLevel === 'provincial' &&
+              drillOptions.cities?.map((city) => (
+                <button
+                  key={city.code}
+                  type="button"
+                  onClick={() => handleDrillCity(city.code)}
+                  className="group flex items-center justify-between rounded-xl border border-slate-700/60 bg-surface-900/40 p-4 text-left transition-all hover:border-brand-500/40 hover:bg-surface-800/60"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-400 group-hover:bg-cyan-500/30">
+                      <MapPin size={18} />
+                    </div>
+                    <div>
+                      <div className="font-medium text-white group-hover:text-brand-300">
+                        {city.name}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        共 {city.corridorCount} 条管廊
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronRight
+                    size={16}
+                    className="text-slate-600 opacity-0 transition group-hover:opacity-100 group-hover:text-brand-400"
+                  />
+                </button>
+              ))}
+
+            {currentLevel === 'municipal' &&
+              drillOptions.corridors?.map((corridor) => (
+                <button
+                  key={corridor.id}
+                  type="button"
+                  onClick={() => handleDrillCorridor(corridor.id)}
+                  className="group flex items-center justify-between rounded-xl border border-slate-700/60 bg-surface-900/40 p-4 text-left transition-all hover:border-brand-500/40 hover:bg-surface-800/60"
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={cn(
+                        'flex h-10 w-10 items-center justify-center rounded-lg',
+                        corridor.healthIndex >= 80
+                          ? 'bg-emerald-500/20 text-emerald-400 group-hover:bg-emerald-500/30'
+                          : corridor.healthIndex >= 60
+                            ? 'bg-amber-500/20 text-amber-400 group-hover:bg-amber-500/30'
+                            : 'bg-red-500/20 text-red-400 group-hover:bg-red-500/30'
+                      )}
+                    >
+                      <ChevronDown size={18} />
+                    </div>
+                    <div>
+                      <div className="font-medium text-white group-hover:text-brand-300">
+                        {corridor.name}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        健康指数 {formatNumber(corridor.healthIndex, 1)}
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronRight
+                    size={16}
+                    className="text-slate-600 opacity-0 transition group-hover:opacity-100 group-hover:text-brand-400"
+                  />
+                </button>
+              ))}
+          </div>
+        </Card>
+      )}
 
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
@@ -351,6 +621,74 @@ export default function ReportDetail() {
           </table>
         </div>
       </Card>
+
+      {report.topCorridors && report.topCorridors.length > 0 && (
+        <Card
+          title="TOP 管廊健康排名"
+          subtitle="按健康指数排序的管廊列表"
+          rightElement={<Badge variant="cyan">{report.topCorridors.length} 条</Badge>}
+        >
+          <div className="overflow-hidden rounded-lg border border-slate-700/60">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-surface-900/60 text-left text-xs text-slate-400">
+                  <th className="px-4 py-3 font-medium">排名</th>
+                  <th className="px-4 py-3 font-medium">管廊名称</th>
+                  <th className="px-4 py-3 font-medium">所属城市</th>
+                  <th className="px-4 py-3 font-medium">健康指数</th>
+                  <th className="px-4 py-3 font-medium">故障率</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.topCorridors.map((corridor, i) => (
+                  <tr key={corridor.id} className="border-t border-slate-800/60 hover:bg-surface-800/30">
+                    <td className="px-4 py-3">
+                      <span
+                        className={cn(
+                          'inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold',
+                          i === 0
+                            ? 'bg-amber-500/20 text-amber-400'
+                            : i === 1
+                              ? 'bg-slate-400/20 text-slate-300'
+                              : i === 2
+                                ? 'bg-orange-700/30 text-orange-400'
+                                : 'bg-slate-700/40 text-slate-400'
+                        )}
+                      >
+                        {i + 1}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-white">{corridor.name}</td>
+                    <td className="px-4 py-3 text-slate-400">
+                      <span className="flex items-center gap-1">
+                        <MapPin size={12} />
+                        {corridor.city || '-'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={cn(
+                          'font-mono',
+                          corridor.healthIndex >= 80
+                            ? 'text-emerald-400'
+                            : corridor.healthIndex >= 60
+                              ? 'text-amber-400'
+                              : 'text-red-400'
+                        )}
+                      >
+                        {formatNumber(corridor.healthIndex, 1)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-slate-300">
+                      {formatPercent(corridor.failureRate, 2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       <Card
         title="优化策略建议"
