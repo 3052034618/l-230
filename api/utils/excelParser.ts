@@ -5,10 +5,12 @@ export interface InspectionNodeData {
   plannedDate: string;
   priority: 'high' | 'medium' | 'low';
   inspector?: string;
+  year?: number;
 }
 
 export interface ParsedInspectionExcel {
   year: number;
+  yearSource: 'year_column' | 'date_column' | 'default';
   nodes: InspectionNodeData[];
 }
 
@@ -16,6 +18,7 @@ const CORRIDOR_NAME_KEYS = ['管廊段', '管廊名称'];
 const PLANNED_DATE_KEYS = ['计划日期', '巡检日期'];
 const PRIORITY_KEYS = ['优先级', '等级'];
 const INSPECTOR_KEYS = ['巡检人', '负责人'];
+const YEAR_KEYS = ['年度', '年份', '计划年度', '巡检年度', '年'];
 
 function findColumnKey(headers: string[], keys: string[]): string | undefined {
   return headers.find((h) => keys.includes(h.trim()));
@@ -75,8 +78,29 @@ function parseDate(value: string | number): string {
   return v;
 }
 
-function extractYear(nodes: InspectionNodeData[]): number {
+function parseYear(value: string | number): number | null {
+  if (typeof value === 'number') {
+    if (value >= 2000 && value <= 2100) {
+      return Math.floor(value);
+    }
+    return null;
+  }
+  const v = (value || '').trim();
+  const match = v.match(/(\d{4})/);
+  if (match) {
+    const year = parseInt(match[1], 10);
+    if (year >= 2000 && year <= 2100) {
+      return year;
+    }
+  }
+  return null;
+}
+
+function extractYearFromNodes(nodes: InspectionNodeData[]): number {
   for (const node of nodes) {
+    if (node.year) {
+      return node.year;
+    }
     const match = node.plannedDate.match(/^(\d{4})/);
     if (match) {
       return parseInt(match[1], 10);
@@ -93,7 +117,7 @@ export function parseInspectionExcel(buffer: Buffer): ParsedInspectionExcel {
   const jsonData = XLSX.utils.sheet_to_json<any>(worksheet, { header: 1 });
   
   if (jsonData.length < 2) {
-    return { year: new Date().getFullYear(), nodes: [] };
+    return { year: new Date().getFullYear(), yearSource: 'default', nodes: [] };
   }
 
   const headers = (jsonData[0] as string[]).map((h) => String(h || '').trim());
@@ -102,8 +126,10 @@ export function parseInspectionExcel(buffer: Buffer): ParsedInspectionExcel {
   const dateKey = findColumnKey(headers, PLANNED_DATE_KEYS);
   const priorityKey = findColumnKey(headers, PRIORITY_KEYS);
   const inspectorKey = findColumnKey(headers, INSPECTOR_KEYS);
+  const yearKey = findColumnKey(headers, YEAR_KEYS);
 
   const nodes: InspectionNodeData[] = [];
+  let hasYearColumn = false;
 
   for (let i = 1; i < jsonData.length; i++) {
     const row = jsonData[i] as any[];
@@ -115,6 +141,7 @@ export function parseInspectionExcel(buffer: Buffer): ParsedInspectionExcel {
     const dateIdx = dateKey ? headers.indexOf(dateKey) : -1;
     const priorityIdx = priorityKey ? headers.indexOf(priorityKey) : -1;
     const inspectorIdx = inspectorKey ? headers.indexOf(inspectorKey) : -1;
+    const yearIdx = yearKey ? headers.indexOf(yearKey) : -1;
 
     const corridorName = corridorIdx >= 0 ? String(row[corridorIdx] || '').trim() : '';
     if (!corridorName) {
@@ -124,16 +151,22 @@ export function parseInspectionExcel(buffer: Buffer): ParsedInspectionExcel {
     const plannedDate = dateIdx >= 0 ? parseDate(row[dateIdx]) : '';
     const priority = priorityIdx >= 0 ? parsePriority(String(row[priorityIdx] || '')) : 'medium';
     const inspector = inspectorIdx >= 0 && row[inspectorIdx] ? String(row[inspectorIdx]).trim() : undefined;
+    const year = yearIdx >= 0 ? parseYear(row[yearIdx]) : undefined;
+    if (year !== undefined && year !== null) {
+      hasYearColumn = true;
+    }
 
     nodes.push({
       corridorName,
       plannedDate,
       priority,
       inspector,
+      year: year || undefined,
     });
   }
 
-  const year = extractYear(nodes);
+  const year = extractYearFromNodes(nodes);
+  const yearSource = hasYearColumn ? 'year_column' : (dateKey ? 'date_column' : 'default');
 
-  return { year, nodes };
+  return { year, yearSource, nodes };
 }

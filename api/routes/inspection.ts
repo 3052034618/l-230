@@ -28,7 +28,7 @@ function matchCorridorId(corridorName: string): string | undefined {
   return corridor?.id;
 }
 
-function enrichNodesWithCorridorId(nodes: { corridorName: string; plannedDate: string; priority: 'high' | 'medium' | 'low'; inspector?: string }[]): InspectionNode[] {
+function enrichNodesWithCorridorId(nodes: { corridorName: string; plannedDate: string; priority: 'high' | 'medium' | 'low'; inspector?: string; year?: number }[]): InspectionNode[] {
   return nodes.map((node, index) => {
     const corridorId = matchCorridorId(node.corridorName);
     return {
@@ -38,6 +38,7 @@ function enrichNodesWithCorridorId(nodes: { corridorName: string; plannedDate: s
       plannedDate: node.plannedDate,
       priority: node.priority,
       inspector: node.inspector,
+      year: node.year,
     };
   });
 }
@@ -114,6 +115,7 @@ router.post('/upload', rawParser, (req, res) => {
       success: true,
       data: {
         year: result.year,
+        yearSource: result.yearSource,
         nodes: enrichedNodes,
       },
     });

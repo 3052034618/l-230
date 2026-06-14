@@ -400,6 +400,49 @@ export default function AlertDetailPage() {
                   </div>
                 )}
               </div>
+            ) : alert.status === 'approved' ? (
+              <div className="space-y-4">
+                <div className="flex flex-col items-center justify-center py-4">
+                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/20">
+                    <CheckCircle size={24} className="text-emerald-400" />
+                  </div>
+                  <p className="text-sm font-medium text-white">三级审批全部通过</p>
+                  <p className="mt-1 text-xs text-slate-400">紧急排风系统已启动</p>
+                </div>
+                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+                  <div className="flex items-center gap-2 text-xs text-emerald-400">
+                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span>通风系统运行中</span>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-300">
+                    已联动启动管廊通风系统，预计30分钟内气体浓度恢复正常水平。
+                  </p>
+                </div>
+                <Button variant="outline" className="w-full" size="sm">
+                  查看通风系统状态
+                </Button>
+              </div>
+            ) : alert.status === 'rejected' ? (
+              <div className="space-y-4">
+                <div className="flex flex-col items-center justify-center py-4">
+                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/20">
+                    <XCircle size={24} className="text-red-400" />
+                  </div>
+                  <p className="text-sm font-medium text-white">审批已驳回</p>
+                  <p className="mt-1 text-xs text-slate-400">预警流程已终止</p>
+                </div>
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+                  <p className="text-xs text-slate-300">
+                    该预警被审批驳回，请查看时间线了解驳回原因，如需继续处理请重新发起预警。
+                  </p>
+                </div>
+                <Button variant="outline" className="w-full" size="sm">
+                  重新发起预警
+                </Button>
+              </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-6 text-slate-500">
                 <CheckCircle size={36} className="mb-2 text-emerald-500/60" />

@@ -116,6 +116,7 @@ export interface InspectionNode {
   plannedDate: string;
   inspector?: string;
   priority: Priority;
+  year?: number;
 }
 
 export interface InspectionPlan {
@@ -172,6 +173,7 @@ export interface OperationReport {
   weekNumber: number;
   year: number;
   region: string;
+  level?: string;
   startDate: string;
   endDate: string;
   generatedAt: string;
@@ -182,10 +184,17 @@ export interface OperationReport {
     totalAlerts: number;
     avgDeviceAvailability: number;
     maintenanceTimelyRate: number;
+    corridorCount?: number;
   };
   failureDistribution: { category: string; count: number; percentage: number }[];
   trendComparison: { week: string; healthIndex: number; failureRate: number }[];
   recommendations: string[];
+  topCorridors?: {
+    id: string;
+    name: string;
+    healthIndex: number;
+    failureRate: number;
+  }[];
 }
 
 export type UserRole = 'hq_director' | 'regional_manager' | 'duty_officer' | 'inspector';

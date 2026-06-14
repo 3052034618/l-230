@@ -58,12 +58,56 @@ function getProvinceCode(province: string): string {
   return codeMap[province] || province.slice(0, 2).toLowerCase();
 }
 
+function getCityCode(city: string): string {
+  const codeMap: Record<string, string> = {
+    '北京市': 'bj',
+    '上海市': 'sh',
+    '广州市': 'gz',
+    '深圳市': 'sz',
+    '南京市': 'nj',
+    '苏州市': 'sz2',
+    '杭州市': 'hz',
+    '宁波市': 'nb',
+    '成都市': 'cd',
+    '武汉市': 'wh',
+    '济南市': 'jn',
+    '西安市': 'xa',
+  };
+  return codeMap[city] || city.replace(/市$/, '').slice(0, 2).toLowerCase();
+}
+
 function getUserRegionCode(user: User | undefined | null): string {
   if (!user) return 'national';
   if (user.level === 'national') return 'national';
   if (user.level === 'provincial' && user.province) return getProvinceCode(user.province);
-  if (user.level === 'municipal' && user.city) return getProvinceCode(user.province || '');
+  if (user.level === 'municipal' && user.city) return getCityCode(user.city);
   return 'national';
+}
+
+interface GasExceedTracker {
+  [corridorId: string]: {
+    [sensorType: string]: {
+      exceedStartTime: string | null;
+      currentValue: number;
+      peakValue: number;
+    };
+  };
+}
+
+const gasExceedTracker: GasExceedTracker = {};
+
+function getGasExceedInfo(corridorId: string, sensorType: string) {
+  if (!gasExceedTracker[corridorId]) {
+    gasExceedTracker[corridorId] = {};
+  }
+  if (!gasExceedTracker[corridorId][sensorType]) {
+    gasExceedTracker[corridorId][sensorType] = {
+      exceedStartTime: null,
+      currentValue: 0,
+      peakValue: 0,
+    };
+  }
+  return gasExceedTracker[corridorId][sensorType];
 }
 
 export const MOCK_USERS: User[] = [
@@ -188,17 +232,43 @@ export function generateSensorTrend(corridorId: string, sensorType: string): Sen
   const now = new Date();
   const sensor = SENSOR_TYPES.find((s) => s.type === sensorType);
   const base = sensor?.baseVal || 25;
+  const warn = sensor?.warn || base * 1.5;
+
+  const activeAlert = MOCK_ALERTS.find(
+    (a) => a.corridorId === corridorId && a.status !== 'closed' && a.type === 'gas_exceed' && a.sensorType === sensorType
+  );
+
+  const exceedInfo = getGasExceedInfo(corridorId, sensorType);
 
   for (let i = 168; i >= 0; i -= 1) {
     const time = new Date(now.getTime() - i * 3600 * 1000);
     const dayVariation = Math.sin((i / 24) * Math.PI * 2) * base * 0.15;
     const randomVariation = (Math.random() - 0.5) * base * 0.1;
-    const anomaly = i > 120 && i < 130 && sensorType === 'gas_ch4' ? base * 1.5 : 0;
+    let value = base + dayVariation + randomVariation;
+
+    if (activeAlert && i < 24) {
+      const exceedMultiplier = 1.5 + (24 - i) / 24 * 0.8;
+      value = warn * exceedMultiplier;
+    } else if (activeAlert && i >= 24 && i < 48) {
+      value = warn * 1.2;
+    }
+
+    if (i < 2 && activeAlert && activeAlert.status === 'closed') {
+      value = base * 0.9;
+    }
+
     points.push({
       timestamp: formatDate(time),
-      value: Number((base + dayVariation + randomVariation + anomaly).toFixed(2)),
+      value: Number(Math.max(0, value).toFixed(2)),
     });
   }
+
+  if (activeAlert) {
+    exceedInfo.exceedStartTime = activeAlert.createdAt;
+    exceedInfo.currentValue = points[points.length - 1].value;
+    exceedInfo.peakValue = Math.max(...points.map((p) => p.value));
+  }
+
   return points;
 }
 
@@ -526,9 +596,10 @@ export let MOCK_ALERTS: Alert[] = [
 export function updateAlerts(): Alert[] {
   const now = new Date();
   const twoHoursMs = 2 * 60 * 60 * 1000;
+  const tenMinutesMs = 10 * 60 * 1000;
 
   MOCK_ALERTS = MOCK_ALERTS.map((alert) => {
-    if (alert.level === 1 && (alert.status === 'pending' || alert.status === 'processing')) {
+    if (alert.level === 1 && alert.status === 'pending') {
       const createdAt = new Date(alert.createdAt).getTime();
       const elapsed = now.getTime() - createdAt;
 
@@ -556,14 +627,42 @@ export function updateAlerts(): Alert[] {
   });
 
   MOCK_CORRIDORS.forEach((corridor) => {
-    const hasActiveAlert = MOCK_ALERTS.some(
-      (a) => a.corridorId === corridor.id && a.status !== 'closed' && a.type === 'device_low_availability'
+    const hasActiveDeviceAlert = MOCK_ALERTS.some(
+      (a) => a.corridorId === corridor.id && a.status !== 'closed' && a.status !== 'rejected' && a.type === 'device_low_availability'
     );
 
-    if (!hasActiveAlert && corridor.deviceAvailability < 90) {
+    if (!hasActiveDeviceAlert && corridor.deviceAvailability < 90) {
       const newAlert = createAlertFromCorridor(corridor, 'device_low_availability');
       MOCK_ALERTS.push(newAlert);
     }
+
+    const gasSensorTypes = ['gas_ch4', 'gas_co', 'gas_h2s'];
+    gasSensorTypes.forEach((sensorType) => {
+      const hasActiveGasAlert = MOCK_ALERTS.some(
+        (a) => a.corridorId === corridor.id && a.status !== 'closed' && a.status !== 'rejected' && a.type === 'gas_exceed' && a.sensorType === sensorType
+      );
+
+      if (!hasActiveGasAlert) {
+        const exceedInfo = getGasExceedInfo(corridor.id, sensorType);
+        if (exceedInfo.exceedStartTime) {
+          const exceedDuration = now.getTime() - new Date(exceedInfo.exceedStartTime).getTime();
+          if (exceedDuration >= tenMinutesMs) {
+            const sensor = SENSOR_TYPES.find((s) => s.type === sensorType);
+            const newAlert = createAlertFromCorridor(
+              corridor,
+              'gas_exceed',
+              {
+                sensorType,
+                thresholdValue: sensor?.warn || 25,
+                actualValue: exceedInfo.currentValue,
+                durationMinutes: Math.floor(exceedDuration / 60000),
+              }
+            );
+            MOCK_ALERTS.push(newAlert);
+          }
+        }
+      }
+    });
   });
 
   return MOCK_ALERTS;
@@ -670,7 +769,13 @@ const reportCache = new Map<string, OperationReport>();
 
 export function generateReportForUser(user: User | undefined | null, weekOffset = 0): OperationReport {
   const regionCode = getUserRegionCode(user);
-  const regionName = user?.level === 'national' ? '全国' : user?.province || user?.city || user?.region || '全国';
+  const level = user?.level || 'national';
+  let regionName = '全国';
+  if (level === 'provincial' && user?.province) {
+    regionName = user.province;
+  } else if (level === 'municipal' && user?.city) {
+    regionName = user.city;
+  }
   const year = 2026;
   const weekNum = 24 - weekOffset;
   const reportId = `rep-${regionCode}-${year}-w${weekNum}`;
@@ -702,9 +807,18 @@ export function generateReportForUser(user: User | undefined | null, weekOffset 
   if (highFailureCorridors.length > 0) {
     recommendations.push(`${highFailureCorridors[0].name}设备故障率偏高，建议安排全面检修`);
   }
-  if (corridors.some((c) => c.province === '广东')) {
-    recommendations.push('珠三角区域管廊通风设备备件库存需补充');
+
+  if (level === 'national') {
+    recommendations.push('统筹全国管廊运维资源，向高风险区域倾斜');
+    recommendations.push('优化跨区域应急响应联动机制');
+  } else if (level === 'provincial') {
+    recommendations.push(`${regionName}省内管廊通风设备备件库存需补充`);
+    recommendations.push('加强省内各城市管廊运维人员培训');
+  } else if (level === 'municipal') {
+    recommendations.push(`${regionName}管廊气体传感器需安排校准`);
+    recommendations.push('优化本市巡检路线，提高巡检效率');
   }
+
   if (corridors.length > 3) {
     recommendations.push('优化高风险区域的传感器布点密度');
   }
@@ -714,6 +828,7 @@ export function generateReportForUser(user: User | undefined | null, weekOffset 
     weekNumber: weekNum,
     year,
     region: regionName,
+    level,
     startDate: formatDate(start),
     endDate: formatDate(end),
     generatedAt: formatDate(end),
@@ -724,6 +839,7 @@ export function generateReportForUser(user: User | undefined | null, weekOffset 
       totalAlerts: Math.max(0, Math.floor(alerts.length * 0.8 + Math.random() * 5)),
       avgDeviceAvailability: Number(avgDeviceAvailability.toFixed(1)),
       maintenanceTimelyRate: 92 - weekOffset * 0.5,
+      corridorCount: corridors.length,
     },
     failureDistribution: [
       { category: '通风设备故障', count: Math.floor(5 + Math.random() * 5), percentage: 32 },
@@ -738,6 +854,12 @@ export function generateReportForUser(user: User | undefined | null, weekOffset 
       failureRate: Number((2 + Math.random() * 1).toFixed(2)),
     })),
     recommendations: recommendations.slice(0, Math.max(2, recommendations.length)),
+    topCorridors: corridors.slice(0, 5).map((c) => ({
+      id: c.id,
+      name: c.name,
+      healthIndex: c.healthIndex,
+      failureRate: c.failureRate,
+    })),
   };
 
   reportCache.set(reportId, report);

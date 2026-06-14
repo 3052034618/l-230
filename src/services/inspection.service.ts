@@ -11,9 +11,9 @@ export async function uploadInspectionPlan(uploadedBy: string) {
   return data;
 }
 
-export async function uploadInspectionExcel(file: File): Promise<{ year: number; nodes: InspectionNode[] }> {
+export async function uploadInspectionExcel(file: File): Promise<{ year: number; yearSource: string; nodes: InspectionNode[] }> {
   const arrayBuffer = await file.arrayBuffer();
-  const { data } = await api.post<{ success: boolean; data: { year: number; nodes: InspectionNode[] } }>(
+  const { data } = await api.post<{ success: boolean; data: { year: number; yearSource: string; nodes: InspectionNode[] } }>(
     '/inspection/upload',
     arrayBuffer,
     {

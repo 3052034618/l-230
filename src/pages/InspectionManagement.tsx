@@ -35,6 +35,7 @@ export default function InspectionManagement() {
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
   const [parsedNodes, setParsedNodes] = useState<InspectionNode[]>([]);
   const [parsedYear, setParsedYear] = useState<number | null>(null);
+  const [parsedYearSource, setParsedYearSource] = useState<string>('');
   const [showPreview, setShowPreview] = useState(false);
   const [selectedFileName, setSelectedFileName] = useState('');
   const { user } = useAuthStore();
@@ -70,6 +71,7 @@ export default function InspectionManagement() {
         const result = await uploadInspectionExcel(file);
         setParsedNodes(result.nodes);
         setParsedYear(result.year);
+        setParsedYearSource(result.yearSource);
         setShowPreview(true);
       } catch (error) {
         console.error('上传解析失败:', error);
@@ -116,6 +118,7 @@ export default function InspectionManagement() {
   const handleCancelPreview = () => {
     setParsedNodes([]);
     setParsedYear(null);
+    setParsedYearSource('');
     setShowPreview(false);
     setSelectedFileName('');
   };
@@ -173,6 +176,11 @@ export default function InspectionManagement() {
               {parsedYear && (
                 <Badge variant="cyan">{parsedYear}年度</Badge>
               )}
+              {parsedYearSource && (
+                <Badge variant="default">
+                  {parsedYearSource === 'year_column' ? '年度列' : parsedYearSource === 'date_column' ? '日期列' : '默认'}
+                </Badge>
+              )}
               <button
                 onClick={handleCancelPreview}
                 className="flex h-7 w-7 items-center justify-center rounded text-slate-400 transition hover:bg-slate-800 hover:text-white"
@@ -183,44 +191,61 @@ export default function InspectionManagement() {
           }
         >
           <div className="space-y-3">
+            {parsedYearSource === 'year_column' && (
+              <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-xs text-emerald-400">
+                <span className="font-medium">年度来源：</span>已识别Excel中的"年度"列，计划年度优先按该列保存
+              </div>
+            )}
             <div className="max-h-64 overflow-y-auto scrollbar-thin">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-surface-900/90 text-slate-400 backdrop-blur">
                   <tr className="text-left">
                     <th className="px-4 py-2 font-medium">优先级</th>
                     <th className="px-4 py-2 font-medium">管廊段</th>
+                    <th className="px-4 py-2 font-medium">计划年度</th>
                     <th className="px-4 py-2 font-medium">计划日期</th>
                     <th className="px-4 py-2 font-medium">巡检人员</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {parsedNodes.map((node, index) => (
-                    <tr
-                      key={index}
-                      className="border-t border-slate-800/60 text-slate-300 hover:bg-surface-800/40"
-                    >
-                      <td className="px-4 py-2.5">
-                        <Badge
-                          variant={
-                            node.priority === 'high'
-                              ? 'danger'
+                  {parsedNodes.map((node, index) => {
+                    const nodeYear = (node as any).year;
+                    const dateMatch = node.plannedDate.match(/^(\d{4})/);
+                    const dateYear = dateMatch ? parseInt(dateMatch[1], 10) : null;
+                    const yearMismatch = nodeYear && dateYear && nodeYear !== dateYear;
+                    return (
+                      <tr
+                        key={index}
+                        className="border-t border-slate-800/60 text-slate-300 hover:bg-surface-800/40"
+                      >
+                        <td className="px-4 py-2.5">
+                          <Badge
+                            variant={
+                              node.priority === 'high'
+                                ? 'danger'
+                                : node.priority === 'medium'
+                                ? 'warning'
+                                : 'success'
+                            }
+                          >
+                            {node.priority === 'high'
+                              ? '高'
                               : node.priority === 'medium'
-                              ? 'warning'
-                              : 'success'
-                          }
-                        >
-                          {node.priority === 'high'
-                            ? '高'
-                            : node.priority === 'medium'
-                            ? '中'
-                            : '低'}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-2.5">{node.corridorName}</td>
-                      <td className="px-4 py-2.5">{formatDate(node.plannedDate)}</td>
-                      <td className="px-4 py-2.5">{node.inspector || '-'}</td>
-                    </tr>
-                  ))}
+                              ? '中'
+                              : '低'}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-2.5">{node.corridorName}</td>
+                        <td className="px-4 py-2.5">
+                          <span className={yearMismatch ? 'text-amber-400' : ''}>
+                            {nodeYear || parsedYear || '-'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">{formatDate(node.plannedDate)}</td>
+                        <td className="px-4 py-2.5">{node.inspector || '-'}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -314,45 +339,60 @@ export default function InspectionManagement() {
                             <tr className="text-left">
                               <th className="px-4 py-2 font-medium">优先级</th>
                               <th className="px-4 py-2 font-medium">管廊段</th>
+                              <th className="px-4 py-2 font-medium">计划年度</th>
                               <th className="px-4 py-2 font-medium">计划日期</th>
                               <th className="px-4 py-2 font-medium">巡检人员</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {plan.nodes.map((node) => (
-                              <tr
-                                key={node.id}
-                                className="border-t border-slate-800/60 text-slate-300 hover:bg-surface-800/40"
-                              >
-                                <td className="px-4 py-2.5">
-                                  <Badge
-                                    variant={
-                                      node.priority === 'high'
-                                        ? 'danger'
+                            {plan.nodes.map((node) => {
+                              const nodeYear = (node as any).year;
+                              const dateMatch = node.plannedDate.match(/^(\d{4})/);
+                              const dateYear = dateMatch ? parseInt(dateMatch[1], 10) : null;
+                              const yearMismatch = nodeYear && dateYear && nodeYear !== dateYear;
+                              return (
+                                <tr
+                                  key={node.id}
+                                  className="border-t border-slate-800/60 text-slate-300 hover:bg-surface-800/40"
+                                >
+                                  <td className="px-4 py-2.5">
+                                    <Badge
+                                      variant={
+                                        node.priority === 'high'
+                                          ? 'danger'
+                                          : node.priority === 'medium'
+                                          ? 'warning'
+                                          : 'success'
+                                      }
+                                    >
+                                      {node.priority === 'high'
+                                        ? '高'
                                         : node.priority === 'medium'
-                                        ? 'warning'
-                                        : 'success'
-                                    }
-                                  >
-                                    {node.priority === 'high'
-                                      ? '高'
-                                      : node.priority === 'medium'
-                                      ? '中'
-                                      : '低'}
-                                  </Badge>
-                                </td>
-                                <td className="px-4 py-2.5">
-                                  <Link
-                                    to={`/corridor/${node.corridorId}`}
-                                    className="transition hover:text-brand-400"
-                                  >
-                                    {node.corridorName}
-                                  </Link>
-                                </td>
-                                <td className="px-4 py-2.5">{formatDate(node.plannedDate)}</td>
-                                <td className="px-4 py-2.5">{node.inspector || '-'}</td>
-                              </tr>
-                            ))}
+                                        ? '中'
+                                        : '低'}
+                                    </Badge>
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <Link
+                                      to={`/corridor/${node.corridorId}`}
+                                      className="transition hover:text-brand-400"
+                                    >
+                                      {node.corridorName}
+                                    </Link>
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <span className={yearMismatch ? 'text-amber-400' : ''}>
+                                      {nodeYear || plan.year}
+                                      {yearMismatch && (
+                                        <span className="ml-1 text-[10px]">(与日期年份不同)</span>
+                                      )}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2.5">{formatDate(node.plannedDate)}</td>
+                                  <td className="px-4 py-2.5">{node.inspector || '-'}</td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>

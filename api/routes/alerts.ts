@@ -107,10 +107,31 @@ router.post('/:id/approve', (req, res) => {
     );
   }
 
-  const allApproved = alert.approvalFlow.every((s) => s.status === 'approved');
-  if (allApproved) {
-    alert.status = 'approved';
+  if (status === 'rejected') {
+    alert.status = 'rejected';
+    addTimelineEvent(
+      alert.id,
+      'status_changed',
+      approver || '系统',
+      '预警审批被驳回，流程终止',
+      '驳回原因: ' + (comment || '无'),
+      undefined
+    );
+  } else {
+    const allApproved = alert.approvalFlow.every((s) => s.status === 'approved');
+    if (allApproved) {
+      alert.status = 'approved';
+      addTimelineEvent(
+        alert.id,
+        'status_changed',
+        '系统',
+        '三级审批全部通过，紧急排风系统已启动',
+        '已联动启动管廊通风系统，预计30分钟内气体浓度恢复正常',
+        undefined
+      );
+    }
   }
+
   res.json(alert);
 });
 
